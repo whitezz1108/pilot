@@ -69,6 +69,12 @@
 # THIS IS STILL A DEVELOPMENT CONFIGURATION, and this is not a confirmatory
 # freeze.
 
+# PRE-PILOT BUDGET CHANGE (2026-09-24).
+# At the researcher's direction, the per-call output ceiling is 4096 -> 16384
+# for both roles. Earlier development calls retain their recorded 4096-token
+# configuration; new run plans must capture the changed model fingerprint.
+# The 180-second timeout and all other model parameters remain unchanged.
+
 models_version: "1"
 
 roles:
@@ -76,7 +82,7 @@ roles:
     provider: openai-compatible
     model_id: DeepSeek-V4.1-Flash
     temperature: 0.0
-    max_output_tokens: 4096
+    max_output_tokens: 16384
     top_p: null
     timeout_seconds: 180.0
 
@@ -84,6 +90,6 @@ roles:
     provider: openai-compatible
     model_id: DeepSeek-V4.1-Flash
     temperature: 0.0
-    max_output_tokens: 4096
+    max_output_tokens: 16384
     top_p: null
     timeout_seconds: 180.0
