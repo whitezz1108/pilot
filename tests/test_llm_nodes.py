@@ -49,7 +49,11 @@ import sample_case
 from pilot01.config import load_models_v1
 from pilot01.events import EventType
 from pilot01.model import ModelCallLog, ModelClientError, ScriptedModelClient
-from pilot01.prompts import load_compliance_prompt, load_manager_prompt
+from pilot01.prompts import (
+    load_compliance_prompt,
+    load_manager_prompt,
+    load_repair_prompt,
+)
 from pilot01.schemas import (
     ClauseStatus,
     ComplianceOutput,
@@ -427,7 +431,9 @@ def test_one_malformed_response_is_repaired_and_the_run_completes(
     assert len(repairs) == 1
     assert repairs[0].role == "manager"
     assert repairs[0].repair_reason is not None
-    assert repairs[0].prompt_version == "manager_v1+repair_v1"
+    assert repairs[0].prompt_version == (
+        f"{load_manager_prompt().ref}+{load_repair_prompt().ref}"
+    )
 
 
 def test_the_repair_turn_carries_no_experimental_content(
@@ -714,7 +720,10 @@ def test_the_fixture_gold_is_present_and_visible_only_on_the_state(llm_runner, m
 def test_every_model_call_records_its_prompt_version(llm_runner, llm_case, make_state):
     llm_runner.run(make_state())
     by_role = {record.role: record.prompt_version for record in llm_case.log.records}
-    assert by_role == {"manager": "manager_v1", "compliance": "compliance_v1"}
+    assert by_role == {
+        "manager": load_manager_prompt().ref,
+        "compliance": load_compliance_prompt().ref,
+    }
 
 
 def test_the_prompt_version_matches_the_file_that_was_used(llm_runner, llm_case, make_state):

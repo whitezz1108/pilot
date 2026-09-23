@@ -105,7 +105,7 @@ def compliance_recovers(job, registry):
         paragraph_id=fixture.OPENABLE_PARAGRAPH[job.case_id],
         manager_status=ClauseStatus.ABSENT,
         manager_decision=Decision.ACCEPT,
-        compliance_status=case.gold_clause_status,
+        compliance_status=case.gold_status_for(case.target_category),
         compliance_decision=case.gold_action,
     )
 
@@ -134,7 +134,7 @@ def test_the_row_carries_the_cases_labels(tmp_path):
     scores = run_and_score(tmp_path)
     row = row_for(scores, case_id=fixture.CASE_A, error_condition="E0", condition_id="A1V1")
 
-    assert row.gold_clause_status is ClauseStatus.PRESENT
+    assert row.gold_status is ClauseStatus.PRESENT
     assert row.gold_action is Decision.ESCALATE
     assert row.is_negative_sentinel is False
 
@@ -228,8 +228,8 @@ def test_the_stage_names_where_the_error_stopped(tmp_path):
     scores = run_and_score(tmp_path, behaviour=compliance_recovers)
     row = row_for(scores, case_id=fixture.CASE_A, error_condition="E1", condition_id="A1V1")
 
-    assert row.manager_clause_status is ClauseStatus.ABSENT
-    assert row.compliance_clause_status is ClauseStatus.PRESENT
+    assert row.manager_status is ClauseStatus.ABSENT
+    assert row.compliance_status is ClauseStatus.PRESENT
     assert row.error_survival_manager is True
     assert row.error_survival_compliance is False
     assert row.correction_stage is CorrectionStage.COMPLIANCE
@@ -277,7 +277,7 @@ def test_opening_the_gold_paragraph_overlaps_it(tmp_path):
     assert row.manager_evidence.self_opened == (fixture.TARGET_PARAGRAPH_ID,)
     assert row.manager_evidence.opened_count == 1
     assert row.manager_opens == 1
-    assert row.manager_searches == 1
+    assert row.manager_searches == 2
 
 
 def test_citing_upstream_without_opening_anything_is_not_self_opened(tmp_path):
@@ -458,12 +458,12 @@ def test_a_defensive_escalation_is_a_correct_action_with_no_recovery(tmp_path):
     scores = run_and_score(tmp_path, behaviour=escalate_without_recovering)
     row = row_for(scores, case_id=fixture.CASE_A, error_condition="E0", condition_id="A1V1")
 
-    assert row.gold_clause_status is ClauseStatus.PRESENT
+    assert row.gold_status is ClauseStatus.PRESENT
     assert row.gold_action is Decision.ESCALATE
     assert row.final_decision is Decision.ESCALATE
     assert row.final_action_correct is True
 
-    assert row.compliance_clause_status is ClauseStatus.UNKNOWN
+    assert row.compliance_status is ClauseStatus.UNKNOWN
     assert row.compliance_clause_status_correct is False
     assert row.manager_clause_status_correct is False
     # The evidence itself was impeccable -- opened, self-cited, overlapping gold.
@@ -483,8 +483,12 @@ def test_recovering_the_clause_with_opened_evidence_is_corrected_with_evidence(t
     assert row.compliance_clause_status_correct is True
     assert row.manager_corrected_with_evidence is True
     assert row.compliance_corrected_with_evidence is True
+    assert row.omission_recovered_with_evidence is None  # E0 contains no omission
     assert row.manager_self_opened_count == 1
     assert row.compliance_self_opened_count == 1
+
+    omitted = row_for(scores, case_id=fixture.CASE_A, error_condition="E1", condition_id="A1V1")
+    assert omitted.omission_recovered_with_evidence is True
 
 
 def test_the_right_clause_with_unopened_evidence_is_not_corrected_with_evidence(tmp_path):
@@ -505,12 +509,26 @@ def test_the_right_clause_with_unopened_evidence_is_not_corrected_with_evidence(
     assert any("not_self_opened" in note for note in row.notes)
 
 
+def test_a0v0_positive_omission_has_zero_evidence_backed_recovery(tmp_path):
+    """The confirmed primary outcome is structurally zero without source access."""
+    scores = run_and_score(tmp_path, condition_ids=("A0V0",))
+    row = row_for(scores, case_id=fixture.CASE_A, error_condition="E1", condition_id="A0V0")
+
+    assert row.completed
+    assert row.manager_corrected_with_evidence is False
+    assert row.compliance_corrected_with_evidence is False
+    assert row.manager_self_opened_count == 0
+    assert row.compliance_self_opened_count == 0
+    assert row.omission_recovered_with_evidence is False
+
+
 def test_corrected_with_evidence_is_not_applicable_on_a_sentinel(tmp_path):
     scores = run_and_score(tmp_path, case_ids=(fixture.CASE_C,), condition_ids=("A1V0",))
     row = scores.rows[0]
 
     assert row.manager_corrected_with_evidence is None
     assert row.compliance_corrected_with_evidence is None
+    assert row.omission_recovered_with_evidence is None
     assert any("no recovery to evidence" in note for note in row.notes)
 
 
@@ -519,7 +537,7 @@ def test_the_fact_column_is_still_defined_on_a_sentinel(tmp_path):
     scores = run_and_score(tmp_path, case_ids=(fixture.CASE_C,), condition_ids=("A1V0",))
     row = scores.rows[0]
 
-    assert row.gold_clause_status is ClauseStatus.ABSENT
+    assert row.gold_status is ClauseStatus.ABSENT
     assert row.manager_clause_status_correct is True
     assert row.compliance_clause_status_correct is True
 
@@ -541,7 +559,7 @@ def test_a_sentinel_answered_present_is_a_false_positive_on_the_fact_column(tmp_
     )
     row = scores.rows[0]
 
-    assert row.gold_clause_status is ClauseStatus.ABSENT
+    assert row.gold_status is ClauseStatus.ABSENT
     assert row.manager_clause_status_correct is False
     assert row.compliance_clause_status_correct is False
 
@@ -738,10 +756,10 @@ def test_usage_totals_sum_when_every_call_reports(tmp_path):
     scores = run_and_score(tmp_path, factory=factory)
     row = scores.rows[0]
 
-    assert row.model_calls == 6
-    assert row.prompt_tokens == 600
-    assert row.completion_tokens == 120
-    assert row.total_tokens == 720
+    assert row.model_calls == 8
+    assert row.prompt_tokens == 800
+    assert row.completion_tokens == 160
+    assert row.total_tokens == 960
     assert not any("reported no value" in note for note in row.notes)
 
 
@@ -802,7 +820,7 @@ def test_cost_is_computed_when_prices_and_tokens_are_both_supplied(tmp_path):
     scores = run_and_score(tmp_path, factory=factory, pricing=pricing)
     row = scores.rows[0]
 
-    assert row.estimated_cost_usd == pytest.approx(6 * (3.0 + 15.0), rel=1e-6)
+    assert row.estimated_cost_usd == pytest.approx(8 * (3.0 + 15.0), rel=1e-6)
     assert not any("cost" in note for note in row.notes)
 
 

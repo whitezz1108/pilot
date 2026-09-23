@@ -19,6 +19,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
+import sample_case
 from conftest import GOLD_OFFSET_SENTINELS
 from pilot01.schemas import ClauseStatus, ErrorCondition, HiddenGold
 from pilot01.workflow.export import (
@@ -81,7 +82,7 @@ def test_run_outcome_itself_is_not_an_export_format(make_state, runner):
     outcome = runner.run(make_state("A1V1", ErrorCondition.E1))
     raw = json.dumps(outcome.model_dump(mode="json"))
 
-    assert "gold_clause_status" in raw
+    assert "gold_target_clause_status" in raw
     assert str(GOLD_OFFSET_SENTINELS[0]) in raw
 
     # ... and the supported path does not.
@@ -229,7 +230,10 @@ def test_hidden_scoring_data_remains_available_to_the_scorer(make_state, runner)
 
     assert scoring.gold == state.hidden.gold
     assert scoring.gold.gold_evidence_offsets == GOLD_OFFSET_SENTINELS
-    assert scoring.gold.gold_clause_status is ClauseStatus.PRESENT
+    assert (
+        scoring.gold.gold_target_clause_status[sample_case.TARGET_CATEGORY]
+        is ClauseStatus.PRESENT
+    )
     assert scoring.omission == state.hidden.omission
     assert scoring.run_id == outcome.run_id
     assert scoring.condition_id == "A1V1"

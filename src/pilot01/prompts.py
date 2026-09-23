@@ -28,6 +28,9 @@ __all__ = [
     "COMPLIANCE_PROMPT_ID",
     "REPAIR_PROMPT_ID",
     "V1",
+    "V2",
+    "V3",
+    "CURRENT_VERSION",
     "PROMPTS_DIR_ENV",
     "PromptError",
     "PromptTemplate",
@@ -42,6 +45,24 @@ MANAGER_PROMPT_ID = "manager"
 COMPLIANCE_PROMPT_ID = "compliance"
 REPAIR_PROMPT_ID = "repair"
 V1 = "v1"
+V2 = "v2"
+V3 = "v3"
+
+CURRENT_VERSION = V3
+"""The version the pipeline runs.
+
+``v1`` asked for a single contract-level ``clause_status`` and offered no way to
+say "not determined", so an agent that could not tell whether a target clause
+existed had to choose between ``present`` and ``absent`` -- and the choice was
+recorded as though it were an assessment. ``v2`` asks per target category, adds
+``unknown``/``REVIEW`` as first-class answers, and separates evidence the agent
+opened itself from evidence it inherited.
+
+``v3`` keeps the v2 output shape and makes two procedures explicit: silence in
+the handed-off material is not evidence of absence, and a V1 node searches for
+both policy targets before answering. The v1 and v2 files are retained so a
+recorded prompt version still identifies the text that produced it.
+"""
 
 PROMPTS_DIR_ENV = "PILOT01_PROMPT_DIR"
 
@@ -108,7 +129,12 @@ class PromptTemplate(BaseModel):
         return _PLACEHOLDER.sub(lambda match: values[match.group(1)], self.text)
 
 
-def load_prompt(prompt_id: str, version: str = V1, *, directory: Path | None = None) -> PromptTemplate:
+def load_prompt(
+    prompt_id: str,
+    version: str = CURRENT_VERSION,
+    *,
+    directory: Path | None = None,
+) -> PromptTemplate:
     """Load and parse one prompt file."""
     path = (directory or prompts_dir()) / f"{prompt_id}_{version}.md"
     if not path.is_file():
@@ -129,16 +155,16 @@ def load_prompt(prompt_id: str, version: str = V1, *, directory: Path | None = N
     )
 
 
-def load_manager_prompt(version: str = V1) -> PromptTemplate:
+def load_manager_prompt(version: str = CURRENT_VERSION) -> PromptTemplate:
     """The Manager prompt. A Gate-2 development prompt, not a frozen one."""
     return load_prompt(MANAGER_PROMPT_ID, version)
 
 
-def load_compliance_prompt(version: str = V1) -> PromptTemplate:
+def load_compliance_prompt(version: str = CURRENT_VERSION) -> PromptTemplate:
     """The Compliance prompt. A Gate-2 development prompt, not a frozen one."""
     return load_prompt(COMPLIANCE_PROMPT_ID, version)
 
 
-def load_repair_prompt(version: str = V1) -> PromptTemplate:
+def load_repair_prompt(version: str = CURRENT_VERSION) -> PromptTemplate:
     """The format-repair prompt. Shared by both roles."""
     return load_prompt(REPAIR_PROMPT_ID, version)

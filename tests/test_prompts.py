@@ -25,9 +25,13 @@ import pytest
 import pilot01
 from pilot01.prompts import (
     COMPLIANCE_PROMPT_ID,
+    CURRENT_VERSION,
     MANAGER_PROMPT_ID,
     PROMPTS_DIR_ENV,
     REPAIR_PROMPT_ID,
+    V1,
+    V2,
+    V3,
     PromptError,
     PromptTemplate,
     load_compliance_prompt,
@@ -98,9 +102,61 @@ def test_a_missing_prompts_directory_fails_loudly(monkeypatch, tmp_path):
         prompts_dir()
 
 
-def test_all_three_prompt_files_exist_and_are_version_controlled():
-    for name in ("manager_v1.md", "compliance_v1.md", "repair_v1.md"):
-        assert (REPO_ROOT / "prompts" / name).is_file(), name
+def test_every_prompt_version_the_code_can_load_is_on_disk():
+    """Every revision, not only the current one.
+
+    ``v1`` is retained because the development batch ran on it: an output that
+    records ``manager_v1`` has to stay reproducible, which means the file that
+    produced it has to stay readable. ``v2`` records the first refinement;
+    ``v3`` is what new runs use.
+    """
+    for version in (V1, V2, V3):
+        for prompt_id in (MANAGER_PROMPT_ID, COMPLIANCE_PROMPT_ID, REPAIR_PROMPT_ID):
+            name = f"{prompt_id}_{version}.md"
+            assert (REPO_ROOT / "prompts" / name).is_file(), name
+
+
+V1_PROMPT_SHA256 = {
+    "manager_v1.md": "4922ab11ef1c757bc4c83063bd4fe2d263744260e69da98d6d0c302aad6db347",
+    "compliance_v1.md": "6b4b568b2aa70ce1704772c9f64ebbb966dfd259d232332434ce07c18324134f",
+    "repair_v1.md": "84ca621bea0eb2328c4dcb977061f00fec73e64c53e33a6c0f760b786b8b4727",
+}
+"""The v1 prompt files, hashed as the Gate-4 development batch ran them.
+
+Pinned rather than merely checked for existence: "the old file is kept" is only
+true if its contents are. An edit in place would leave the file present while
+making every stored ``manager_v1`` result unreproducible, and the recorded
+prompt version would then name a file that no longer says what it said.
+"""
+
+V2_PROMPT_SHA256 = {
+    "manager_v2.md": "b67e60b485c44e1e389958c20df88df2db1536dac052c83888575f204fff13ed",
+    "compliance_v2.md": "204d9bfdfabc56b8e25bdf1a203f26edfedc503428ce0e3fe6a9b01ae664732e",
+    "repair_v2.md": "f8fc4e53835efd6675f6d748a991b1ded15547a0a523454816c6f30003e55d08",
+}
+"""The v2 prompt text used by the Stage 10 offline runs, retained as recorded."""
+
+
+def test_the_retired_version_is_still_loadable_and_unchanged():
+    import hashlib
+
+    for name, digest in V1_PROMPT_SHA256.items():
+        path = REPO_ROOT / "prompts" / name
+        assert path.is_file(), name
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == digest, (
+            f"{name} has changed since the Gate-4 batch ran on it; a prompt "
+            "revision must be a new file, not an edit to this one"
+        )
+    for prompt_id in (MANAGER_PROMPT_ID, COMPLIANCE_PROMPT_ID, REPAIR_PROMPT_ID):
+        assert load_prompt(prompt_id, V1).ref == f"{prompt_id}_{V1}"
+
+
+def test_the_v2_prompt_text_is_retained_after_the_v3_revision():
+    import hashlib
+
+    for name, digest in V2_PROMPT_SHA256.items():
+        path = REPO_ROOT / "prompts" / name
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
 
 
 def test_a_missing_prompt_file_fails_loudly(tmp_path):
@@ -109,12 +165,20 @@ def test_a_missing_prompt_file_fails_loudly(tmp_path):
 
 
 def test_prompt_version_identifiers(manager_prompt, compliance_prompt, repair_prompt):
-    assert manager_prompt.ref == "manager_v1"
-    assert compliance_prompt.ref == "compliance_v1"
-    assert repair_prompt.ref == "repair_v1"
+    """The fixtures load the version the pipeline runs, not a hard-coded one."""
+    assert manager_prompt.ref == f"{MANAGER_PROMPT_ID}_{CURRENT_VERSION}"
+    assert compliance_prompt.ref == f"{COMPLIANCE_PROMPT_ID}_{CURRENT_VERSION}"
+    assert repair_prompt.ref == f"{REPAIR_PROMPT_ID}_{CURRENT_VERSION}"
+    assert CURRENT_VERSION == V3
     assert MANAGER_PROMPT_ID == "manager"
     assert COMPLIANCE_PROMPT_ID == "compliance"
     assert REPAIR_PROMPT_ID == "repair"
+
+
+def test_the_current_version_is_the_one_the_loaders_default_to():
+    assert load_manager_prompt().ref == f"{MANAGER_PROMPT_ID}_{CURRENT_VERSION}"
+    assert load_compliance_prompt().ref == f"{COMPLIANCE_PROMPT_ID}_{CURRENT_VERSION}"
+    assert load_repair_prompt().ref == f"{REPAIR_PROMPT_ID}_{CURRENT_VERSION}"
 
 
 def test_the_declared_placeholders_are_exactly_what_the_prompts_use(
@@ -224,7 +288,7 @@ def test_the_repair_prompt_describes_the_real_schema(manager_prompt):
 def test_the_derived_field_list_reads_the_schema(manager_prompt):
     fields = render_output_fields(ManagerOutput)
     assert "one of \"present\", \"absent\", \"unknown\"" in fields
-    assert "one of \"ESCALATE\", \"ACCEPT\"" in fields
+    assert "one of \"ESCALATE\", \"ACCEPT\", \"REVIEW\"" in fields
     assert "number between 0.0 and 1.0" in fields
     assert "array of string" in fields
 

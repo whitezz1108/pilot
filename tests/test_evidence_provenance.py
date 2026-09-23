@@ -121,7 +121,7 @@ class Run:
             contract_text_hash=sample_case.CONTRACT_TEXT_HASH,
             target_category=sample_case.TARGET_CATEGORY,
             memo=self.repository.load(sample_case.CASE_ID, error_condition),
-            gold_status=ClauseStatus.PRESENT,
+            gold_target_clause_status={sample_case.TARGET_CATEGORY: ClauseStatus.PRESENT, sample_case.OTHER_CLAUSE_CATEGORY: ClauseStatus.ABSENT},
             policy=sample_case.build_policy(),
             gold_evidence_offsets=(987654321,),
             omission=None if error_condition is ErrorCondition.E0 else omission_record(),
@@ -519,9 +519,10 @@ def test_the_verdict_is_derived_from_the_ledger_not_from_the_claim():
     no_access.go()
     with_access = Run(
         condition_id="A1V1",
-        manager_responses=(search(), open_span(TARGET_PARAGRAPH), claiming),
+        manager_responses=(search(), search("assignment"), open_span(TARGET_PARAGRAPH), claiming),
         compliance_responses=(
             search(),
+            search("assignment"),
             open_span(TARGET_PARAGRAPH),
             sample_case.compliance_response_text(
                 evidence_ids=(TARGET_PARAGRAPH,),

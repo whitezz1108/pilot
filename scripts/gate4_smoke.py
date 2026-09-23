@@ -51,6 +51,18 @@ from pilot01.experiment.cases import CaseRegistry  # noqa: E402
 from pilot01.experiment.runspec import RunPlan, RunSpec, build_run_plan  # noqa: E402
 from pilot01.schemas import ErrorCondition  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from build_development_cases import registry_filename  # noqa: E402
+
+DEFAULT_REGISTRY = REPO_ROOT / "outputs" / "development" / registry_filename()
+"""The registry the smoke reads, at the revision the pipeline currently runs.
+
+Asked of the build script rather than spelled out, so the smoke cannot be
+pointed at a file written by a revision the prompts no longer match. Passing
+``--registry`` explicitly still overrides it, which is how a re-run of the
+Gate-4 smoke is reproduced.
+"""
+
 DEFAULT_CASE_ID = "DEV-POS-COC-0496"
 """The case the smoke uses unless another is named.
 
@@ -149,8 +161,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--registry",
-        default=str(REPO_ROOT / "outputs" / "development" / "cases_v1.json"),
-        help="the development case registry",
+        default=str(DEFAULT_REGISTRY),
+        help=(
+            "the development case registry. Defaults to the current policy "
+            "revision's; pass outputs/development/cases_v1.json to reproduce "
+            "the Gate-4 smoke."
+        ),
     )
     parser.add_argument("--case", default=DEFAULT_CASE_ID, help="the case to smoke")
     parser.add_argument(

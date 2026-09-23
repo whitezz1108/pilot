@@ -38,6 +38,8 @@ import re
 import sys
 from pathlib import Path
 
+from pydantic import ValidationError
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
@@ -45,8 +47,20 @@ from pilot01.config import load_models_v1  # noqa: E402
 from pilot01.experiment.cases import CaseRegistry  # noqa: E402
 from pilot01.experiment.layout import ExperimentPaths  # noqa: E402
 from pilot01.experiment.scoring import score_experiment  # noqa: E402
+from pilot01.schemas import ErrorCondition  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from build_development_cases import registry_filename  # noqa: E402
 
 SMOKE_EXPERIMENT_ID = "gate4-smoke"
+
+DEFAULT_REGISTRY = REPO_ROOT / "outputs" / "development" / registry_filename()
+"""The registry the check scores against, at the current policy revision.
+
+It must be the same revision the smoke ran under: the scorer compares a run's
+assessment against the case's gold, and the two revisions' registries label the
+same twelve contracts, so a mismatched pair would score without complaining.
+"""
 
 REQUIRED_RUN_FILES = (
     "run.json",
@@ -88,6 +102,7 @@ class Check:
         self.name = name
         self.details: list[str] = []
         self.failures: list[str] = []
+        self.incomplete: list[str] = []
 
     def note(self, text: str) -> None:
         self.details.append(text)
@@ -95,21 +110,34 @@ class Check:
     def fail(self, text: str) -> None:
         self.failures.append(text)
 
+    def partial(self, text: str) -> None:
+        self.incomplete.append(text)
+
     def require(self, condition: bool, ok: str, bad: str) -> bool:
         (self.note if condition else self.fail)(ok if condition else bad)
         return condition
 
     @property
     def passed(self) -> bool:
-        return not self.failures
+        return not self.failures and not self.incomplete
+
+    @property
+    def status(self) -> str:
+        if self.failures:
+            return "FAIL"
+        if self.incomplete:
+            return "PARTIAL"
+        return "PASS"
 
     def as_dict(self) -> dict:
         return {
             "number": self.number,
             "name": self.name,
             "passed": self.passed,
+            "status": self.status,
             "details": self.details,
             "failures": self.failures,
+            "incomplete": self.incomplete,
         }
 
 
@@ -119,7 +147,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--experiment-id", default=SMOKE_EXPERIMENT_ID)
     parser.add_argument(
         "--registry",
-        default=str(REPO_ROOT / "outputs" / "development" / "cases_v1.json"),
+        default=str(DEFAULT_REGISTRY),
+        help=(
+            "the development case registry. Defaults to the current policy "
+            "revision's; pass outputs/development/cases_v1.json to check the "
+            "Gate-4 smoke."
+        ),
     )
     parser.add_argument(
         "--report",
@@ -141,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
         _check_no_secrets(paths, runs, Path(args.registry)),
         _check_parsing(runs),
         _check_no_repair_storm(runs),
-        _check_a0_isolated(runs),
+        _check_a0_isolated(runs, registry),
         _check_a1_reached_source(runs),
         _check_a1v1_verified(runs),
         _check_scoring_reconstructs(paths, registry),
@@ -349,10 +382,11 @@ def _check_no_repair_storm(runs: list[dict]) -> Check:
 # ---------------------------------------------------------------------------
 
 
-def _check_a0_isolated(runs: list[dict]) -> Check:
+def _check_a0_isolated(runs: list[dict], registry: CaseRegistry) -> Check:
     check = Check(5, "A0 could not access the source")
     a0 = [run for run in runs if not run["artifact"].get("source_access")]
     check.require(bool(a0), f"{len(a0)} A0 run(s) to check", "no A0 run in the smoke")
+    legacy: list[str] = []
     for run in a0:
         for call in run["tool_calls"]:
             if call.get("available") is not False:
@@ -365,14 +399,56 @@ def _check_a0_isolated(runs: list[dict]) -> Check:
                 f"{_cell(run)} recorded {len(run['tool_calls'])} tool call(s) "
                 "under A0"
             )
-        opened = (run["execution"].get("manager_output") or {}).get("evidence_ids") or []
-        if opened:
-            check.note(
-                f"{_cell(run)} cited {len(opened)} evidence id(s) from the memo "
-                "without opening the source -- the memo's own citations, which is "
-                "what A0 permits"
+        # Read off the provenance block rather than a flat id list. Under A0 the
+        # only ids a Manager can legitimately hold are the ones the memo handed
+        # it, so the field to look at is ``inherited_source_ids``: a non-empty
+        # ``opened_paragraph_ids`` here would mean the agent claimed to have
+        # opened a paragraph it had no tool to open, which is a stronger finding
+        # than the old flat list could express.
+        manager_output = run["execution"].get("manager_output") or {}
+        if "evidence_provenance" not in manager_output:
+            # A tree written before the block existed. The two assertions below
+            # would then both read empty and pass for the wrong reason -- not
+            # because A0 held only the memo's ids, but because nothing was read
+            # at all. Silently passing there is worse than failing, so the run is
+            # collected and the check reports itself as half-run.
+            legacy.append(_cell(run))
+            continue
+        provenance = manager_output["evidence_provenance"] or {}
+        inherited = provenance.get("inherited_source_ids") or []
+        opened = provenance.get("opened_paragraph_ids") or []
+        artifact = run["artifact"]
+        memo = registry.memo(
+            artifact["case_id"], ErrorCondition(artifact["error_condition"])
+        )
+        memo_ids = {source_id for claim in memo.claims for source_id in claim.source_ids}
+        unexpected = sorted(set(inherited) - memo_ids)
+        if unexpected:
+            check.fail(
+                f"{_cell(run)} inherited source id(s) absent from its memo: "
+                + ", ".join(unexpected)
             )
-    if check.passed:
+        if inherited:
+            check.note(
+                f"{_cell(run)} inherited {len(inherited)} source id(s) from the "
+                "memo without opening the source -- the memo's own citations, "
+                "which is what A0 permits"
+            )
+        if opened:
+            check.fail(
+                f"{_cell(run)} reports {len(opened)} opened paragraph id(s) under "
+                "A0, where no source tool was available"
+            )
+    if legacy:
+        check.partial(
+            f"{len(legacy)} A0 run(s) carry no evidence_provenance block "
+            f"({', '.join(sorted(legacy))}), so the provenance half of this check "
+            "did not run. Those artifacts were written before the block existed; "
+            "the tool-level isolation assertions above still hold, but a tree in "
+            "this state cannot support the stronger claim that A0 held only the "
+            "memo's own citations."
+        )
+    if check.passed and not legacy:
         check.note("no A0 run reached a source tool")
     return check
 
@@ -440,12 +516,48 @@ def _check_a1v1_verified(runs: list[dict]) -> Check:
 # ---------------------------------------------------------------------------
 
 
+def _recorded_prompt_versions(paths: ExperimentPaths) -> set[str]:
+    """The prompt versions the run artifacts in this tree were written under.
+
+    Read off the artifacts rather than assumed, so a check that fails on a
+    schema mismatch can say *which* revision produced the files instead of
+    leaving the reader to guess whether the tree is corrupt or merely old.
+    """
+    versions: set[str] = set()
+    for path in sorted(paths.raw_dir.glob("*/model_calls.jsonl")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            version = record.get("prompt_version")
+            if isinstance(version, str):
+                versions.add(version.split("+")[0])
+    return versions
+
+
 def _check_scoring_reconstructs(paths: ExperimentPaths, registry) -> Check:
     check = Check(8, "scoring reconstructs from the raw tree")
     try:
         scores = score_experiment(paths.raw_dir, registry=registry)
     except Exception as exc:  # noqa: BLE001 - the check reports, it does not raise
         check.fail(f"the scorer could not read the raw tree: {type(exc).__name__}: {exc}")
+        recorded = _recorded_prompt_versions(paths)
+        legacy_schema = {"manager_v1", "compliance_v1"}
+        schema_shape_error = isinstance(exc, ValidationError) and any(
+            "target_clause_status" in str(error["loc"])
+            for error in exc.errors()
+        )
+        if recorded and recorded <= legacy_schema and schema_shape_error:
+            check.note(
+                "the artifacts record prompt version(s) "
+                + ", ".join(sorted(recorded))
+                + "; this tree predates the current prompt revision and its "
+                "structured output is incompatible with the current schema. "
+                "Re-run the smoke under the current revision to check it."
+            )
         return check
     check.note(f"{len(scores.rows)} score row(s) reconstructed from raw artifacts alone")
     if not scores.rows:
@@ -585,16 +697,24 @@ def _findings(runs: list[dict], paths: ExperimentPaths) -> list[dict]:
         {
             "id": "GATE4-DESIGN-01",
             "kind": "design",
-            "status": "open",
+            "status": "addressed-in-revision-2",
             "title": "POLICY-01's UNKNOWN->ESCALATE rule absorbed the omission in the A0 arm",
             "detail": (
                 "For the smoke's positive case the gold clause is present, so the "
                 "gold action is ESCALATE. The E1 memo removes the claim that the "
                 "clause is present, and under A0 the Manager has no way to look. It "
-                "reported clause_status='unknown', which the policy maps to ESCALATE "
-                "-- the gold action. The run scores correct while the omission "
-                "survived both agents uncorrected (error_survival_manager=True, "
-                "error_survival_compliance=True, correction_stage='never')."
+                "reported target clause status 'unknown', which revision 1 of the "
+                "policy mapped to ESCALATE -- the gold action. The run scores "
+                "correct while the omission survived both agents uncorrected "
+                "(error_survival_manager=True, error_survival_compliance=True, "
+                "correction_stage='never')."
+            ),
+            "note_on_the_field_name": (
+                "This finding was written against a flat ``clause_status`` field "
+                "that no longer exists; the output is now a per-category "
+                "``target_clause_status``. The observation is unchanged -- the "
+                "status reported for the target category was 'unknown' -- only the "
+                "field that carried it has been renamed and widened."
             ),
             "evidence": (
                 "gate4-smoke run DEV-POS-COC-0496 E1 x A0V0: final_action_correct=True, "
@@ -602,18 +722,31 @@ def _findings(runs: list[dict], paths: ExperimentPaths) -> list[dict]:
                 "correction_stage=never."
             ),
             "action_taken": (
-                "NONE, deliberately. §16 forbids rewriting prompts or policy in "
-                "response to an outcome difference, and one case at one repeat is not "
-                "evidence of a pattern. Recorded for the §16 verdict and for the "
-                "confirmatory gate's design review."
+                "NONE at the time, deliberately. §16 forbids rewriting prompts or "
+                "policy in response to an outcome difference, and one case at one "
+                "repeat is not evidence of a pattern. Recorded for the §16 verdict "
+                "and for the confirmatory gate's design review."
+            ),
+            "resolution": (
+                "Closed by POLICY-01 revision 2, which maps an unresolved target "
+                "clause to REVIEW instead of ESCALATE. Under revision 2 the run "
+                "described above no longer scores a correct action: the reported "
+                "status is still 'unknown', the gold action is still ESCALATE, and "
+                "'unknown' now maps to REVIEW, so final_action_correct is False and "
+                "the absorbed omission is visible in the action metric as well as in "
+                "error_survival_*. The revision was made on the design argument "
+                "recorded in ``gate4_review_action_plan.md`` and in the policy "
+                "file's own rationale, not on this single run's outcome; this run "
+                "is cited as the illustration, not as the evidence."
             ),
             "changes_the_design": False,
             "why_it_matters": (
-                "final_action_correct cannot separate a decision that was right from "
-                "one that was right by accident, on this case. error_survival_* and "
-                "correction_stage can, and they carry the signal. Whether the pattern "
-                "holds across the eight positive cases is what the 60-run batch is "
-                "for -- which is a reason to run it, not a reason to change it first."
+                "final_action_correct could not separate a decision that was right "
+                "from one that was right by accident, on this case, under revision "
+                "1. error_survival_* and correction_stage could, and they carry the "
+                "signal. Revision 2 restores the action metric's ability to tell "
+                "them apart; whether the pattern holds across the eight positive "
+                "cases is what the 60-run batch is for."
             ),
         },
         {
@@ -672,12 +805,14 @@ def _print_report(report: dict, path: Path) -> None:
           f"{report['experiment_id']}")
     print()
     for check in report["checks"]:
-        mark = "PASS" if check["passed"] else "FAIL"
+        mark = check["status"]
         print(f"[{mark}] {check['number']:>2}. {check['name']}")
         for detail in check["details"]:
             print(f"        {detail}")
         for failure in check["failures"]:
             print(f"     -> {failure}")
+        for incomplete in check["incomplete"]:
+            print(f"     -> {incomplete}")
     print()
     print(f"findings ({len(report['findings'])})")
     for finding in report["findings"]:

@@ -143,7 +143,7 @@ def scenario_d(job, registry):
         paragraph_id=fixture.OPENABLE_PARAGRAPH[job.case_id],
         manager_status=ClauseStatus.ABSENT,
         manager_decision=Decision.ACCEPT,
-        compliance_status=case.gold_clause_status,
+        compliance_status=case.gold_status_for(case.target_category),
         compliance_decision=case.gold_action,
     )
 
@@ -261,10 +261,10 @@ def scenario_m(job, registry):
 def test_scenario_a_correct_memo_is_a_correct_run(tmp_path):
     row = score(tmp_path, scenario_a, error_condition=ErrorCondition.E0)
 
-    assert row.gold_clause_status is ClauseStatus.PRESENT
+    assert row.gold_status is ClauseStatus.PRESENT
     assert row.gold_action is Decision.ESCALATE
-    assert row.manager_clause_status is ClauseStatus.PRESENT
-    assert row.compliance_clause_status is ClauseStatus.PRESENT
+    assert row.manager_status is ClauseStatus.PRESENT
+    assert row.compliance_status is ClauseStatus.PRESENT
     assert row.final_decision is Decision.ESCALATE
     assert row.final_action_correct is True
     assert row.manager_corrected_with_evidence is True
@@ -283,9 +283,9 @@ def test_scenario_a_correct_memo_is_a_correct_run(tmp_path):
 def test_scenario_b_the_omission_survives_and_produces_a_wrong_accept(tmp_path):
     row = score(tmp_path, e1_only(scenario_b))
 
-    assert row.gold_clause_status is ClauseStatus.PRESENT
-    assert row.manager_clause_status is ClauseStatus.ABSENT
-    assert row.compliance_clause_status is ClauseStatus.ABSENT
+    assert row.gold_status is ClauseStatus.PRESENT
+    assert row.manager_status is ClauseStatus.ABSENT
+    assert row.compliance_status is ClauseStatus.ABSENT
     assert row.final_decision is Decision.ACCEPT
     assert row.final_action_correct is False
     assert row.error_survival_manager is True
@@ -306,8 +306,8 @@ def test_scenario_b_the_omission_survives_and_produces_a_wrong_accept(tmp_path):
 def test_scenario_c_the_manager_corrects_the_omission_itself(tmp_path):
     row = score(tmp_path, scenario_c)
 
-    assert row.manager_clause_status is ClauseStatus.PRESENT
-    assert row.compliance_clause_status is ClauseStatus.PRESENT
+    assert row.manager_status is ClauseStatus.PRESENT
+    assert row.compliance_status is ClauseStatus.PRESENT
     assert row.final_action_correct is True
     assert row.error_survival_manager is False
     assert row.correction_stage is CorrectionStage.MANAGER
@@ -324,8 +324,8 @@ def test_scenario_c_the_manager_corrects_the_omission_itself(tmp_path):
 def test_scenario_d_compliance_recovers_what_the_manager_lost(tmp_path):
     row = score(tmp_path, e1_only(scenario_d))
 
-    assert row.manager_clause_status is ClauseStatus.ABSENT
-    assert row.compliance_clause_status is ClauseStatus.PRESENT
+    assert row.manager_status is ClauseStatus.ABSENT
+    assert row.compliance_status is ClauseStatus.PRESENT
     assert row.error_survival_manager is True
     assert row.error_survival_compliance is False
     assert row.correction_stage is CorrectionStage.COMPLIANCE
@@ -347,7 +347,7 @@ def test_scenario_e_a_defensive_escalation_is_not_a_correction(tmp_path):
     assert row.final_decision is Decision.ESCALATE
     assert row.final_action_correct is True
 
-    assert row.manager_clause_status is ClauseStatus.UNKNOWN
+    assert row.manager_status is ClauseStatus.UNKNOWN
     assert row.manager_clause_status_correct is False
     assert row.compliance_clause_status_correct is False
     assert row.manager_corrected_with_evidence is False
@@ -466,7 +466,7 @@ def test_scenario_h_the_sentinel_is_correctly_accepted(tmp_path):
     )
 
     assert row.is_negative_sentinel is True
-    assert row.gold_clause_status is ClauseStatus.ABSENT
+    assert row.gold_status is ClauseStatus.ABSENT
     assert row.gold_action is Decision.ACCEPT
     assert row.final_decision is Decision.ACCEPT
     assert row.final_action_correct is True
@@ -516,8 +516,8 @@ def test_scenario_j_a_manager_protocol_failure_leaves_the_run_unscored(tmp_path)
     assert row.failure_stage == "manager"
 
     # Nothing downstream was reached, and nothing is guessed.
-    assert row.manager_clause_status is None
-    assert row.compliance_clause_status is None
+    assert row.manager_status is None
+    assert row.compliance_status is None
     assert row.final_decision is None
     assert row.final_action_correct is None
     assert row.manager_clause_status_correct is None
@@ -546,7 +546,7 @@ def test_scenario_k_a_compliance_protocol_failure_keeps_the_manager_scoreable(tm
     assert row.failure_stage == "compliance"
 
     # The Manager's half ran and is scored on its own terms.
-    assert row.manager_clause_status is ClauseStatus.PRESENT
+    assert row.manager_status is ClauseStatus.PRESENT
     assert row.manager_clause_status_correct is True
     assert row.manager_corrected_with_evidence is True
     assert row.manager_evidence.failure is None
@@ -554,7 +554,7 @@ def test_scenario_k_a_compliance_protocol_failure_keeps_the_manager_scoreable(tm
     assert row.manager_model_calls > 0
 
     # The Compliance half produced nothing, and is unavailable rather than wrong.
-    assert row.compliance_clause_status is None
+    assert row.compliance_status is None
     assert row.compliance_clause_status_correct is None
     assert row.final_decision is None
     assert row.final_action_correct is None
@@ -576,9 +576,9 @@ def test_scenario_l_one_malformed_response_is_repaired_and_the_run_completes(tmp
     assert row.format_repairs == 1
     assert row.model_output_failure is False
     # The repaired run scores exactly as an unbroken one would.
-    assert row.manager_clause_status is ClauseStatus.PRESENT
+    assert row.manager_status is ClauseStatus.PRESENT
     assert row.final_action_correct is True
-    assert row.manager_model_calls == 4  # search, open, malformed, repair
+    assert row.manager_model_calls == 5  # two searches, open, malformed, repair
 
 
 # --------------------------------------------------------------------------
@@ -594,7 +594,7 @@ def test_scenario_m_a_second_malformed_response_fails_the_run(tmp_path):
     assert row.model_output_failure is True
     # Exactly one repair was attempted, and no more.
     assert row.format_repairs == 1
-    assert row.manager_model_calls == 4  # search, open, attempt, one repair
+    assert row.manager_model_calls == 5  # two searches, open, attempt, one repair
     assert row.final_action_correct is None
     assert row.manager_clause_status_correct is None
 

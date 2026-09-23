@@ -44,7 +44,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..schemas import ClauseStatus, Decision, ErrorCondition
+from ..schemas import AgentOutput, ClauseStatus, Decision, ErrorCondition, VerificationBasis
 from ..source.document import ContractDocument, is_paragraph_id
 from ..source.tools import OPEN_SOURCE_SPAN, SEARCH_CONTRACT, replay_ledger
 from ..workflow.state import RunStatus
@@ -240,6 +240,21 @@ class EvidenceAssessment(BaseModel):
         return len(self.cited)
 
 
+def _reported_ids(output: AgentOutput) -> tuple[str, ...]:
+    """Every id a node reported as evidence, in the order it reported them.
+
+    Both provenance lists, because both are claims the node is making about what
+    it relied on. Keeping them in one sequence here is what lets
+    :func:`_assess_evidence` go on asking its one question -- of the ids this
+    node reported, which did it actually open? -- rather than growing a second
+    code path per provenance class. The class distinction is made where it
+    belongs, in the ledger, and the anti-fabrication check in
+    :mod:`pilot01.source.verification` reads the two lists separately.
+    """
+    provenance = output.evidence_provenance
+    return tuple(provenance.opened_paragraph_ids) + tuple(provenance.inherited_source_ids)
+
+
 def _assess_evidence(
     *,
     node: str,
@@ -357,9 +372,24 @@ class RunScore(BaseModel):
     revision_round: int = Field(default=0, ge=0)
 
     # -- the case's labels (scorer-only; never in a raw artifact) ----------
-    gold_clause_status: ClauseStatus
+    gold_target_clause_status: dict[str, ClauseStatus]
+    """One gold label per target category, as the case declares them."""
+
     gold_action: Decision
     is_negative_sentinel: bool
+    target_category: str
+    """The target category this case is *about* -- the one E1 removes."""
+
+    @property
+    def gold_status(self) -> ClauseStatus:
+        """The gold label of the category this case is about.
+
+        A convenience over ``gold_target_clause_status[target_category]``, and
+        deliberately named for the *category* rather than the contract: there is
+        no contract-level gold status, and a reader who wants one has to say
+        which category they mean.
+        """
+        return self.gold_target_clause_status[self.target_category]
 
     # -- the answer --------------------------------------------------------
     final_decision: Decision | None = None
@@ -373,18 +403,90 @@ class RunScore(BaseModel):
 
     # -- fact, action and evidence, kept apart (§6) ------------------------
     #
-    # These five are the spec's named columns, and they are columns rather than
+    # These are the spec's named columns, and they are columns rather than
     # something a reader is expected to recompute. A run whose final action is
     # correct because the agent escalated defensively, while never recovering
     # the clause, must not be describable as a successful correction -- and the
-    # way to guarantee that is for the two claims to sit in different columns
-    # that can disagree.
-    manager_clause_status: ClauseStatus | None = None
-    compliance_clause_status: ClauseStatus | None = None
+    # way to guarantee that is for the claims to sit in different columns that
+    # can disagree.
+    manager_target_clause_status: dict[str, ClauseStatus] | None = None
+    compliance_target_clause_status: dict[str, ClauseStatus] | None = None
+    """What each node assessed, per target category. ``None`` if it produced nothing."""
+
+    @property
+    def manager_status(self) -> ClauseStatus | None:
+        """What the Manager said about the category this case is about.
+
+        ``None`` when the node produced nothing, or when its assessment does not
+        name this category at all -- which ``require_policy_targets`` refuses at
+        the node boundary, so in a completed run it means the node failed.
+        """
+        return (self.manager_target_clause_status or {}).get(self.target_category)
+
+    @property
+    def compliance_status(self) -> ClauseStatus | None:
+        """What Compliance said about the category this case is about."""
+        return (self.compliance_target_clause_status or {}).get(self.target_category)
+
+    manager_clause_status_correct_by_category: dict[str, bool] = Field(default_factory=dict)
+    compliance_clause_status_correct_by_category: dict[str, bool] = Field(default_factory=dict)
+    """The per-category comparison, so a partly-right assessment stays visible.
+
+    A single boolean over a two-category assessment loses the case where one
+    category was right and the other wrong, which is the interesting one: it is
+    what an agent that resolved one clause and gave up on the other looks like.
+    """
+
     manager_clause_status_correct: bool | None = None
     compliance_clause_status_correct: bool | None = None
+    """Whether *every* target category matched gold. Stricter than before.
+
+    Under ``v1`` there was one status and one comparison. With two categories,
+    "correct" means both, and the per-category columns above carry the detail.
+    """
+
+    manager_fact_recovery_correct: bool | None = None
+    compliance_fact_recovery_correct: bool | None = None
+    """Whether the node recovered the specific fact the error destroyed.
+
+    Defined on the case's own target category, and only where its gold label is
+    ``present``: that is the claim E1 deletes, so it is the only fact there is
+    to recover. ``None`` for a sentinel, where nothing was removed.
+
+    This is the column GATE4-DESIGN-01 asked for. It is *not* independent of
+    :attr:`final_action_correct` -- POLICY-01 maps any ``present`` target to
+    ESCALATE, so recovering the fact implies the action, and the cell
+    ``fact_recovery_correct=True, final_action_correct=False`` is empty by
+    construction. Keeping the two as separate columns is what makes that
+    implication checkable instead of assumed; the diagnostics check it directly.
+    """
+
     manager_corrected_with_evidence: bool | None = None
     compliance_corrected_with_evidence: bool | None = None
+
+    @property
+    def omission_recovered_with_evidence(self) -> bool | None:
+        """The confirmed primary outcome for an assessable positive E1 run.
+
+        Either node may recover the omitted fact before the final decision.
+        Source-backed recovery is impossible in A0V0, so a completed A0V0 E1
+        run returns ``False`` even if it guesses the missing fact correctly.
+        E0, sentinels, and protocol failures are outside this denominator.
+        """
+        if (
+            self.error_condition is not ErrorCondition.E1
+            or self.is_negative_sentinel
+            or not self.completed
+        ):
+            return None
+        values = (
+            self.manager_corrected_with_evidence,
+            self.compliance_corrected_with_evidence,
+        )
+        if all(value is None for value in values):
+            return None
+        return any(value is True for value in values)
+
     false_escalation: bool | None = None
     """A negative sentinel answered ESCALATE. ``None`` for every other case.
 
@@ -410,6 +512,19 @@ class RunScore(BaseModel):
     compliance_verification_checked: bool = False
     compliance_verification_satisfied: bool | None = None
     verification_failures: tuple[str, ...] = ()
+
+    # -- declared vs derived verification ----------------------------------
+    #
+    # The declared value is what the model said it did; the derived value is
+    # what the ledger shows it did. The derived one is the verdict -- but the
+    # *disagreement* between them is a measurement in its own right, and one
+    # that ``v1`` could not take at all, because the two were the same field.
+    manager_verification_basis_declared: VerificationBasis | None = None
+    manager_verification_basis_derived: VerificationBasis | None = None
+    manager_verification_basis_agrees: bool | None = None
+    compliance_verification_basis_declared: VerificationBasis | None = None
+    compliance_verification_basis_derived: VerificationBasis | None = None
+    compliance_verification_basis_agrees: bool | None = None
 
     # -- claim adoption integrity -----------------------------------------
     manager_adopted_claims: tuple[str, ...] = ()
@@ -493,24 +608,63 @@ def _sum_or_none(values: Iterable[int | float | None], label: str, notes: list[s
     return sum(values)  # type: ignore[arg-type]
 
 
-def _clause_status_correct(
+def _clause_status_correct_by_category(
     *,
     node: str,
-    gold_status: ClauseStatus,
-    status: ClauseStatus | None,
+    gold: Mapping[str, ClauseStatus],
+    statuses: Mapping[str, ClauseStatus] | None,
+    notes: list[str],
+) -> dict[str, bool]:
+    """Per-category agreement between one node's assessment and gold.
+
+    Every category the case labels is reported, including one the node failed to
+    assess at all -- an unanswered category is a disagreement, not a missing
+    row, because dropping it would let an agent improve its score by saying less.
+    """
+    if statuses is None:
+        notes.append(f"{node}_clause_status_correct: the node produced no output")
+        return {}
+    return {
+        category: statuses.get(category) is gold_status
+        for category, gold_status in gold.items()
+    }
+
+
+def _all_categories_correct(per_category: Mapping[str, bool]) -> bool | None:
+    """Whether every labelled category matched. ``None`` if there were none."""
+    if not per_category:
+        return None
+    return all(per_category.values())
+
+
+def _fact_recovery_correct(
+    *,
+    node: str,
+    target_category: str,
+    gold: Mapping[str, ClauseStatus],
+    statuses: Mapping[str, ClauseStatus] | None,
     notes: list[str],
 ) -> bool | None:
-    """Whether one node's clause status matches the frozen gold status.
+    """Whether one node recovered the fact the omission destroyed.
 
-    Defined on both arms: a sentinel's gold status is ``absent``, so a node that
-    says ``absent`` is right, and saying ``present`` is the false positive the
-    sentinel exists to catch. This is the fact metric, and it is deliberately
-    independent of the action metric -- §6's whole point.
+    Defined on the case's own target category, and applicable only where that
+    category's gold label is ``present``: E1 deletes the claim asserting that
+    clause, so on the omission arm it is the fact that was lost and on the
+    control arm it is the fact that had to survive. A sentinel has no such
+    claim, so the column is ``None`` rather than ``False`` -- nothing was
+    removed, and ``False`` would read as a failure to recover nothing.
     """
-    if status is None:
-        notes.append(f"{node}_clause_status_correct: the node produced no output")
+    if statuses is None:
+        notes.append(f"{node}_fact_recovery_correct: the node produced no output")
         return None
-    return status is gold_status
+    gold_status = gold[target_category]
+    if gold_status is not ClauseStatus.PRESENT:
+        notes.append(
+            f"{node}_fact_recovery_correct: not applicable, the case's target "
+            "clause is not present, so no fact was removed"
+        )
+        return None
+    return statuses.get(target_category) is gold_status
 
 
 def _corrected_with_evidence(
@@ -662,14 +816,14 @@ def score_run(
     compliance_ledger = replay_ledger(raw.tool_calls, node="compliance")
     manager_evidence = _assess_evidence(
         node="manager",
-        cited=None if manager_output is None else manager_output.evidence_ids,
+        cited=None if manager_output is None else _reported_ids(manager_output),
         opened_ids=manager_ledger.opened_ids,
         document=document,
         gold_spans=gold_spans,
     )
     compliance_evidence = _assess_evidence(
         node="compliance",
-        cited=None if compliance_output is None else compliance_output.evidence_ids,
+        cited=None if compliance_output is None else _reported_ids(compliance_output),
         opened_ids=compliance_ledger.opened_ids,
         document=document,
         gold_spans=gold_spans,
@@ -683,9 +837,23 @@ def score_run(
     else:
         final_action_correct = final_decision is case.gold_action
 
-    manager_status = None if manager_output is None else manager_output.clause_status
+    # The per-category assessments, and the single "the case's own target
+    # category" value the older metrics below are defined on. Those metrics --
+    # error survival, correction stage, corrected-with-evidence -- were all
+    # written about the clause the case is about, and E1 deletes exactly that
+    # clause's claim, so they keep their meaning unchanged when read through the
+    # target category rather than through a contract-level status.
+    gold = case.gold_target_clause_status
+    target_category = case.target_category
+    target_gold_status = case.gold_status_for(target_category)
+
+    manager_statuses = None if manager_output is None else dict(manager_output.target_clause_status)
+    compliance_statuses = (
+        None if compliance_output is None else dict(compliance_output.target_clause_status)
+    )
+    manager_status = None if manager_statuses is None else manager_statuses.get(target_category)
     compliance_status = (
-        None if compliance_output is None else compliance_output.clause_status
+        None if compliance_statuses is None else compliance_statuses.get(target_category)
     )
 
     # -- verification ------------------------------------------------------
@@ -702,10 +870,41 @@ def score_run(
             return None
         return all(outcome.satisfied for outcome in outcomes)
 
+    def basis(outcomes: Sequence, attr: str) -> VerificationBasis | None:
+        """The basis one node declared, or the one the ledger derived.
+
+        ``None`` when the node was never assessed, and also when its verdicts
+        disagree with each other -- a node with two invocations that derived
+        different bases has no single value, and picking one would invent a fact.
+        """
+        values = {getattr(outcome, attr) for outcome in outcomes}
+        values.discard(None)
+        if len(values) != 1:
+            return None
+        return values.pop()
+
+    def basis_agrees(outcomes: Sequence) -> bool | None:
+        if not outcomes:
+            return None
+        return all(outcome.basis_agrees for outcome in outcomes)
+
+    manager_by_category = _clause_status_correct_by_category(
+        node="manager", gold=gold, statuses=manager_statuses, notes=notes
+    )
+    compliance_by_category = _clause_status_correct_by_category(
+        node="compliance", gold=gold, statuses=compliance_statuses, notes=notes
+    )
+
     # -- claim adoption ----------------------------------------------------
-    manager_adopted = () if manager_output is None else manager_output.adopted_upstream_claim_ids
+    manager_adopted = (
+        ()
+        if manager_output is None
+        else manager_output.evidence_provenance.upstream_claim_ids
+    )
     compliance_adopted = (
-        () if compliance_output is None else compliance_output.adopted_upstream_claim_ids
+        ()
+        if compliance_output is None
+        else compliance_output.evidence_provenance.upstream_claim_ids
     )
     # The Manager's permitted claim vocabulary is the memo it was actually
     # given. ``omission_target_claim_id`` names the claim the *E1* arm deletes,
@@ -810,35 +1009,42 @@ def score_run(
         model_output_failure=bool(failure and failure.model_output_failure),
         steps_executed=execution.steps_executed,
         revision_round=execution.revision_round,
-        gold_clause_status=case.gold_clause_status,
+        gold_target_clause_status=dict(gold),
         gold_action=case.gold_action,
         is_negative_sentinel=case.is_negative_sentinel,
+        target_category=target_category,
         final_decision=final_decision,
         final_action_correct=final_action_correct,
-        manager_clause_status=manager_status,
-        compliance_clause_status=compliance_status,
-        manager_clause_status_correct=_clause_status_correct(
+        manager_target_clause_status=manager_statuses,
+        compliance_target_clause_status=compliance_statuses,
+        manager_clause_status_correct_by_category=manager_by_category,
+        compliance_clause_status_correct_by_category=compliance_by_category,
+        manager_clause_status_correct=_all_categories_correct(manager_by_category),
+        compliance_clause_status_correct=_all_categories_correct(compliance_by_category),
+        manager_fact_recovery_correct=_fact_recovery_correct(
             node="manager",
-            gold_status=case.gold_clause_status,
-            status=manager_status,
+            target_category=target_category,
+            gold=gold,
+            statuses=manager_statuses,
             notes=notes,
         ),
-        compliance_clause_status_correct=_clause_status_correct(
+        compliance_fact_recovery_correct=_fact_recovery_correct(
             node="compliance",
-            gold_status=case.gold_clause_status,
-            status=compliance_status,
+            target_category=target_category,
+            gold=gold,
+            statuses=compliance_statuses,
             notes=notes,
         ),
         manager_corrected_with_evidence=_corrected_with_evidence(
             node="manager",
-            gold_status=case.gold_clause_status,
+            gold_status=target_gold_status,
             status=manager_status,
             evidence=manager_evidence,
             notes=notes,
         ),
         compliance_corrected_with_evidence=_corrected_with_evidence(
             node="compliance",
-            gold_status=case.gold_clause_status,
+            gold_status=target_gold_status,
             status=compliance_status,
             evidence=compliance_evidence,
             notes=notes,
@@ -851,20 +1057,20 @@ def score_run(
         error_survival_manager=_error_survival(
             node="manager",
             error_condition=artifact.error_condition,
-            gold_status=case.gold_clause_status,
+            gold_status=target_gold_status,
             status=manager_status,
             notes=notes,
         ),
         error_survival_compliance=_error_survival(
             node="compliance",
             error_condition=artifact.error_condition,
-            gold_status=case.gold_clause_status,
+            gold_status=target_gold_status,
             status=compliance_status,
             notes=notes,
         ),
         correction_stage=_correction_stage(
             error_condition=artifact.error_condition,
-            gold_status=case.gold_clause_status,
+            gold_status=target_gold_status,
             manager_status=manager_status,
             compliance_status=compliance_status,
             notes=notes,
@@ -886,6 +1092,18 @@ def score_run(
         ),
         compliance_verification_satisfied=satisfied(compliance_verifications),
         verification_failures=tuple(verification_failures),
+        manager_verification_basis_declared=basis(
+            manager_verifications, "declared_basis"
+        ),
+        manager_verification_basis_derived=basis(manager_verifications, "derived_basis"),
+        manager_verification_basis_agrees=basis_agrees(manager_verifications),
+        compliance_verification_basis_declared=basis(
+            compliance_verifications, "declared_basis"
+        ),
+        compliance_verification_basis_derived=basis(
+            compliance_verifications, "derived_basis"
+        ),
+        compliance_verification_basis_agrees=basis_agrees(compliance_verifications),
         manager_adopted_claims=tuple(manager_adopted),
         compliance_adopted_claims=tuple(compliance_adopted),
         unknown_adopted_claims=tuple(unknown_adopted),

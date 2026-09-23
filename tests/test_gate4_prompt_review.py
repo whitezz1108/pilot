@@ -21,7 +21,16 @@ import pytest
 import gate4_fixture as g4
 import pilot01
 from pilot01.config import load_conditions_v1
-from pilot01.schemas import ClauseStatus, Decision, ErrorCondition, ManagerOutput, VerificationStatus
+from pilot01.prompts import CURRENT_VERSION, load_compliance_prompt, load_manager_prompt, load_repair_prompt
+from pilot01.schemas import (
+    AgentOutput,
+    ClauseStatus,
+    Decision,
+    ErrorCondition,
+    EvidenceProvenance,
+    ManagerOutput,
+    VerificationBasis,
+)
 from pilot01.workflow.nodes.compliance import build_compliance_messages
 from pilot01.workflow.nodes.manager import build_manager_messages
 from pilot01.workflow.nodes.render import (
@@ -58,7 +67,7 @@ def _state(case_id: str, error_condition: ErrorCondition, condition_id: str) -> 
         contract_text_hash=spec.contract_text_hash,
         target_category=spec.target_category,
         memo=g4.registry().memo(case_id, error_condition),
-        gold_status=spec.gold_clause_status,
+        gold_target_clause_status=dict(spec.gold_target_clause_status),
         policy=spec.policy,
         gold_evidence_offsets=spec.gold_evidence_offsets,
         omission=g4.registry().omission_record(case_id),
@@ -93,11 +102,15 @@ def test_the_review_covers_every_real_case(review_payload):
 
 def test_the_review_modified_no_prompt(review_payload):
     assert review_payload["prompt_files_unchanged_by_this_review"] is True
+    # Derived from the loaders rather than spelled out: the review's claim is
+    # that it reports the versions it actually read, not that they are any
+    # particular version.
     assert review_payload["prompt_versions"] == {
-        "manager": "manager_v1",
-        "compliance": "compliance_v1",
-        "repair": "repair_v1",
+        "manager": load_manager_prompt().ref,
+        "compliance": load_compliance_prompt().ref,
+        "repair": load_repair_prompt().ref,
     }
+    assert review_payload["prompt_version_under_review"] == CURRENT_VERSION
 
 
 def test_the_review_does_not_read_an_outcome():
@@ -287,16 +300,25 @@ def test_compliance_receives_no_memo_block_and_no_summary():
             state = _state(case_id, error_condition, "A1V1")
             memo = state.analyst_memo
             handoff = ManagerOutput(
-                clause_status=ClauseStatus.PRESENT,
+                target_clause_status={
+                    category: ClauseStatus.PRESENT
+                    for category in spec.policy.target_clause_categories
+                },
                 decision=Decision.ESCALATE,
                 rule_id=spec.policy.policy_id,
-                verification_status=VerificationStatus.NOT_CHECKED,
+                evidence_provenance=EvidenceProvenance(
+                    upstream_claim_ids=tuple(
+                        claim.claim_id for claim in memo.claims
+                    ),
+                    inherited_source_ids=tuple(
+                        source_id
+                        for claim in memo.claims
+                        for source_id in claim.source_ids
+                    ),
+                    verification_basis=VerificationBasis.UPSTREAM_ONLY,
+                ),
                 confidence=0.5,
                 reason_summary="stand-in handoff",
-                evidence_ids=tuple(
-                    source_id for claim in memo.claims for source_id in claim.source_ids
-                ),
-                adopted_upstream_claim_ids=tuple(claim.claim_id for claim in memo.claims),
                 uncertainties=(),
             )
             view = build_compliance_view(state.model_copy(update={"manager_output": handoff}))
@@ -308,32 +330,51 @@ def test_compliance_receives_no_memo_block_and_no_summary():
                 assert f"category: {claim.category}" not in text
 
 
+V1_OUTPUT_FIELDS = (
+    "clause_status",
+    "decision",
+    "rule_id",
+    "verification_status",
+    "confidence",
+    "reason_summary",
+    "evidence_ids",
+    "adopted_upstream_claim_ids",
+    "uncertainties",
+)
+"""The v1 schema's fields. Retained so the retired prompts stay checked against
+the schema they were written for, rather than against the current one."""
+
+
 def test_the_prompts_document_every_output_field_the_parser_requires():
-    fields = (
-        "clause_status",
-        "decision",
-        "rule_id",
-        "verification_status",
-        "confidence",
-        "reason_summary",
-        "evidence_ids",
-        "adopted_upstream_claim_ids",
-        "uncertainties",
-    )
-    for prompt_id in ("manager", "compliance"):
-        text = (PROMPTS / f"{prompt_id}_v1.md").read_text(encoding="utf-8")
-        for field in fields:
-            assert f"`{field}`" in text, f"{prompt_id}: {field}"
+    """Each revision documents the fields its own schema parses.
+
+    The current revision's list is read off the schema rather than written out,
+    so a field added to ``AgentOutput`` or ``EvidenceProvenance`` without a
+    prompt sentence fails here. The v1 list is spelled out because that schema
+    no longer exists in code -- only in the file the development batch ran on.
+    """
+    current = tuple(AgentOutput.model_fields) + tuple(EvidenceProvenance.model_fields)
+    for version, fields in (("v1", V1_OUTPUT_FIELDS), (CURRENT_VERSION, current)):
+        for prompt_id in ("manager", "compliance"):
+            text = (PROMPTS / f"{prompt_id}_{version}.md").read_text(encoding="utf-8")
+            for field in fields:
+                assert f"`{field}`" in text, f"{prompt_id}_{version}: {field}"
 
 
-def test_the_prompt_files_are_still_at_version_one():
-    """§10: any modification would be a new development version, old file kept."""
+def test_a_prompt_revision_is_a_new_file_and_the_old_one_is_kept():
+    """§10: any modification is a new development version, old file kept.
+
+    The Gate-4 form of this test asserted that no ``*_v2.md`` existed, which was
+    the right check while v1 was current and is the wrong one now. What §10
+    actually requires is the shape of the change: the revision lands as a *new*
+    file, and the file the development batch ran on stays on disk unedited --
+    which :func:`test_the_retired_version_is_still_loadable_and_unchanged` in
+    ``test_prompts.py`` pins by hash.
+    """
     for prompt_id in ("manager", "compliance", "repair"):
-        assert (PROMPTS / f"{prompt_id}_v1.md").is_file()
-    assert not list(PROMPTS.glob("*_v2.md")), (
-        "a v2 prompt exists; §10 requires the change to be documented and the "
-        "full regression suite re-run"
-    )
+        assert (PROMPTS / f"{prompt_id}_v1.md").is_file(), prompt_id
+        assert (PROMPTS / f"{prompt_id}_{CURRENT_VERSION}.md").is_file(), prompt_id
+    assert CURRENT_VERSION != "v1", "this test is about the revision having happened"
 
 
 def test_the_review_makes_no_model_call(monkeypatch):

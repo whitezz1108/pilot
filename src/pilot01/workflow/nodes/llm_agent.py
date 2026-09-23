@@ -99,6 +99,20 @@ def _describe(schema: dict, node: dict) -> str:
         return kind
     if kind == "null":
         return "null"
+    if kind == "object":
+        # ``properties`` is tested first: a model declared with
+        # ``extra="forbid"`` carries both ``properties`` and
+        # ``additionalProperties: false``, and the ``false`` is a closure
+        # marker, not a value type.
+        if "properties" in node:
+            keys = ", ".join(
+                f"{key} ({_describe(schema, sub)})"
+                for key, sub in node["properties"].items()
+            )
+            return f"object with keys {keys}"
+        if isinstance(node.get("additionalProperties"), dict):
+            inner = _describe(schema, node["additionalProperties"])
+            return f"object mapping each key to {inner}"
     return kind or "value"
 
 

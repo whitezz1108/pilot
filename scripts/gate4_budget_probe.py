@@ -52,8 +52,9 @@ from pilot01.schemas import (  # noqa: E402
     ClauseStatus,
     ComplianceOutput,
     Decision,
+    EvidenceProvenance,
     ManagerOutput,
-    VerificationStatus,
+    VerificationBasis,
 )
 
 DEFAULT_CASE_ID = "DEV-POS-COC-0496"
@@ -62,23 +63,29 @@ PROBE_EXPERIMENT_ID = "gate4-budget-probe"
 # A complete, minimal, schema-valid answer for each role. Deliberately *terse*:
 # this is the floor, and a floor measured with a verbose answer would overstate
 # the budget a model needs to answer at all.
-MANAGER_ANSWER = ManagerOutput(
-    clause_status=ClauseStatus.ABSENT,
-    decision=Decision.ACCEPT,
-    rule_id="PROBE",
-    verification_status=VerificationStatus.NOT_CHECKED,
-    confidence=0.5,
-    reason_summary="probe",
-).model_dump_json()
+# ``target_clause_status`` needs one entry per policy target category, so the
+# probe cannot hard-code a single key: it is filled in per plan below, from the
+# policy the plan was built under.
+PROBE_STATUSES = {
+    category: ClauseStatus.ABSENT for category in ("Change Of Control", "Termination For Convenience")
+}
 
-COMPLIANCE_ANSWER = ComplianceOutput(
-    clause_status=ClauseStatus.ABSENT,
-    decision=Decision.ACCEPT,
-    rule_id="PROBE",
-    verification_status=VerificationStatus.NOT_CHECKED,
-    confidence=0.5,
-    reason_summary="probe",
-).model_dump_json()
+
+def _probe_answer(role_output):
+    """A complete, minimal, schema-valid answer for one role."""
+    return role_output(
+        target_clause_status=dict(PROBE_STATUSES),
+        decision=Decision.ACCEPT,
+        rule_id="PROBE",
+        evidence_provenance=EvidenceProvenance(verification_basis=VerificationBasis.UNAVAILABLE),
+        confidence=0.5,
+        reason_summary="probe",
+    ).model_dump_json()
+
+
+MANAGER_ANSWER = _probe_answer(ManagerOutput)
+
+COMPLIANCE_ANSWER = _probe_answer(ComplianceOutput)
 
 # What the Manager's *tool* turn looks like when source access is available: the
 # loop asks for a search before answering, and the probe has to answer that turn

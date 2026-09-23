@@ -364,7 +364,7 @@ def _check_selection_fingerprint() -> Check:
     # The strongest form: rebuild the set offline from the frozen CUAD
     # annotations and confirm the same twelve cases hash to the same digest. A
     # frozen file that no longer reproduces is a file, not a freeze.
-    build = build_gate4_development_set()
+    build = build_gate4_development_set(policy=load_policy_v1())
     rebuilt = build.case_set.selection.fingerprint
     check.require(
         rebuilt == FROZEN_SELECTION_FINGERPRINT,
@@ -427,7 +427,7 @@ def _check_prompt_freeze() -> Check:
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    build = build_gate4_development_set()
+    build = build_gate4_development_set(policy=load_policy_v1())
     again = module.review(build.registry, build.annotations)
     check.require(
         again == stored,

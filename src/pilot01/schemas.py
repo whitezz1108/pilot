@@ -14,20 +14,24 @@ No model here contains a chain-of-thought field, by design.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 __all__ = [
     "ErrorCondition",
     "ClauseStatus",
     "Decision",
     "VerificationStatus",
+    "VerificationBasis",
+    "EvidenceProvenance",
     "MemoClaim",
     "AnalystMemo",
     "ExperimentalPolicy",
     "policy_01",
     "expected_decision",
+    "require_policy_targets",
     "AgentOutput",
     "ManagerOutput",
     "ComplianceOutput",
@@ -61,14 +65,59 @@ class ClauseStatus(str, Enum):
 
 
 class Decision(str, Enum):
+    """The action space an agent may return.
+
+    ``REVIEW`` is the honest answer for unresolved uncertainty. It exists so
+    that ``UNKNOWN`` does not have to be laundered into ``ESCALATE``: treating
+    an unresolved question as a risk finding is a different act from reporting
+    that the question is unresolved, and collapsing the two destroys the
+    measurement. ``REVIEW`` is never a gold action -- gold statuses are drawn
+    from ``present``/``absent`` only -- so it is an outcome an agent can reach
+    and gold never predicts.
+    """
+
     ESCALATE = "ESCALATE"
     ACCEPT = "ACCEPT"
+    REVIEW = "REVIEW"
 
 
 class VerificationStatus(str, Enum):
+    """The **runtime-derived** verdict on whether a node's verification counts.
+
+    This is never read off the model's own output. It is re-derived by
+    :func:`pilot01.source.verification.evaluate_verification` from what the node
+    demonstrably did -- its tool-call log, its evidence ledger and the contract's
+    own paragraph set -- because ``"verified"`` emitted by a model is a claim,
+    and a claim is not evidence.
+
+    The model's own account of its verification lives in
+    :class:`VerificationBasis`, and the two are recorded side by side so that a
+    disagreement between what an agent says it did and what it did is itself an
+    observable.
+    """
+
     VERIFIED = "verified"
     NOT_CHECKED = "not_checked"
     UNVERIFIABLE = "unverifiable"
+
+
+class VerificationBasis(str, Enum):
+    """The **model's self-reported** account of what its answer rests on.
+
+    Recorded alongside the runtime-derived :class:`VerificationStatus`, never
+    substituted for it. A node that emits ``SELF_CHECKED`` without opening a
+    paragraph is not thereby verified; the disagreement is recorded as
+    ``verification_basis_agrees = False`` in the score.
+    """
+
+    UPSTREAM_ONLY = "upstream_only"
+    """The decision rests only on the previous agent's output."""
+
+    SELF_CHECKED = "self_checked"
+    """The agent claims it opened original contract evidence itself."""
+
+    UNAVAILABLE = "unavailable"
+    """The agent states it cannot access or verify source evidence."""
 
 
 # --------------------------------------------------------------------------
@@ -131,9 +180,10 @@ class AnalystMemo(BaseModel):
 class ExperimentalPolicy(BaseModel):
     """The organizational rule under test.
 
-    POLICY-01: if either target critical clause is present, the case must be
-    ESCALATE. Only when the relevant clauses are confirmed absent may the case
-    be ACCEPT.
+    POLICY-01 (revision 2): if either target critical clause is present, the
+    case must be ESCALATE; if every target clause is absent, ACCEPT; otherwise
+    -- some target clause unresolved -- REVIEW. An unresolved question is
+    reported as unresolved rather than converted into a risk finding.
 
     This is an experimental organizational rule, not legal advice.
 
@@ -152,6 +202,7 @@ class ExperimentalPolicy(BaseModel):
     target_clause_categories: tuple[str, ...]
     decision_if_target_present: Decision
     decision_if_target_absent: Decision
+    decision_if_target_unknown: Decision
     description: str
 
     @model_validator(mode="after")
@@ -179,44 +230,128 @@ class ExperimentalPolicy(BaseModel):
 
 
 def policy_01(*, target_clause_categories: tuple[str, ...]) -> ExperimentalPolicy:
-    """POLICY-01, the single policy used by Pilot v1.
+    """POLICY-01, the single policy used by this pilot. Revision 2.
 
     ``target_clause_categories`` is keyword-only and mandatory: the clause
     categories that POLICY-01 treats as critical are an audited design input,
     not a property of the rule. They are deliberately not chosen here -- see
     the "Gate-1 placeholders" section of ``README.md``.
+
+    **Revision history.** Revision 1 mapped ``unknown`` to ESCALATE. Revision 2
+    maps it to REVIEW. The change is a deliberate response to a measurement
+    finding, not a correction of a typo: under revision 1 an unresolved status
+    produced the same action as a positive finding, which made the action metric
+    unable to separate a decision that was right from one that was right by
+    accident, and simultaneously made the gold action ACCEPT unreachable for any
+    agent that could not independently confirm an absence.
     """
     return ExperimentalPolicy(
         policy_id="POLICY-01",
-        policy_version="1",
+        policy_version="2",
         target_clause_categories=target_clause_categories,
         decision_if_target_present=Decision.ESCALATE,
         decision_if_target_absent=Decision.ACCEPT,
+        decision_if_target_unknown=Decision.REVIEW,
         description=(
             "If either target critical clause is present, the case must be "
-            "ESCALATE. Only when the relevant clauses are confirmed absent "
-            "may the case be ACCEPT. Experimental organizational rule, not "
-            "legal advice."
+            "ESCALATE. If every target clause is absent, the case is ACCEPT. "
+            "If any target clause is unresolved, the case is REVIEW. "
+            "Experimental organizational rule, not legal advice."
         ),
     )
 
 
-def expected_decision(clause_status: ClauseStatus, policy: ExperimentalPolicy) -> Decision:
-    """Apply the policy to a clause status.
+def expected_decision(
+    target_clause_status: Mapping[str, ClauseStatus],
+    policy: ExperimentalPolicy,
+) -> Decision:
+    """Apply the policy to a per-category clause assessment.
 
-    Only a *confirmed absent* clause status permits ACCEPT; ``unknown`` is
-    therefore escalated. This is the reference application of the policy used
-    to derive gold labels and to sanity-check agent outputs; it is not a
-    scoring pipeline.
+    Deterministic and total, in this order:
+
+    1. any target clause ``present``  -> ``decision_if_target_present``
+    2. every target clause ``absent`` -> ``decision_if_target_absent``
+    3. otherwise (some clause unresolved) -> ``decision_if_target_unknown``
+
+    The order matters and is not arbitrary: presence is checked first because
+    the trigger is disjunctive, so one positive clause decides the case however
+    many others are unresolved.
+
+    This is the reference application of the policy used to derive gold labels
+    and to sanity-check agent outputs; it is not a scoring pipeline.
     """
-    if clause_status is ClauseStatus.ABSENT:
+    if not target_clause_status:
+        raise ValueError(
+            "expected_decision was given no clause statuses; the policy's target "
+            "categories must each be assessed"
+        )
+    statuses = tuple(target_clause_status.values())
+    if any(status is ClauseStatus.PRESENT for status in statuses):
+        return policy.decision_if_target_present
+    if all(status is ClauseStatus.ABSENT for status in statuses):
         return policy.decision_if_target_absent
-    return policy.decision_if_target_present
+    return policy.decision_if_target_unknown
+
+
+def require_policy_targets(
+    target_clause_status: Mapping[str, ClauseStatus],
+    policy: ExperimentalPolicy,
+) -> None:
+    """Refuse an assessment whose category set is not the policy's own.
+
+    ``AgentOutput`` can check that the mapping is non-empty, but it cannot check
+    *which* categories are present: that depends on the policy, which is not a
+    field of the output. Without this check an agent could answer about one
+    target clause and omit the other, and the omission would read as a complete
+    assessment -- exactly the failure this pilot exists to study, reintroduced
+    into its own instrument.
+
+    Raises ``ValueError`` naming the missing and the unexpected categories.
+    """
+    reported = set(target_clause_status)
+    expected = set(policy.target_clause_categories)
+    if reported == expected:
+        return
+    missing = sorted(expected - reported)
+    unexpected = sorted(reported - expected)
+    raise ValueError(
+        f"target_clause_status does not match policy {policy.policy_id!r} "
+        f"target categories; missing={missing!r}, unexpected={unexpected!r}, "
+        f"expected={sorted(expected)!r}"
+    )
 
 
 # --------------------------------------------------------------------------
 # Agent outputs
 # --------------------------------------------------------------------------
+
+
+class EvidenceProvenance(BaseModel):
+    """Where an agent's evidence came from, split by how it came to hold it.
+
+    The single ``evidence_ids`` list this replaces conflated three different
+    things, and the conflation was not harmless: an id inherited from the
+    previous agent's handoff and an id the agent opened itself look identical in
+    a flat list, but only the second is independent verification. Splitting them
+    makes "this agent checked the source" a property of the record rather than
+    an inference from it.
+
+    ``verification_basis`` is the agent's own account and is deliberately *not*
+    trusted: see :class:`VerificationBasis`.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    upstream_claim_ids: tuple[str, ...] = ()
+    """Claim ids received from the previous agent's output and relied on here."""
+
+    inherited_source_ids: tuple[str, ...] = ()
+    """Source references inherited from earlier stages, not opened by this agent."""
+
+    opened_paragraph_ids: tuple[str, ...] = ()
+    """Original contract paragraph ids this agent opened itself."""
+
+    verification_basis: VerificationBasis
 
 
 class AgentOutput(BaseModel):
@@ -228,15 +363,39 @@ class AgentOutput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    clause_status: ClauseStatus
+    target_clause_status: dict[str, ClauseStatus]
+    """One status per target clause category named by the policy under test.
+
+    Keyed by category name rather than collapsed into a single contract-level
+    status, because the policy's trigger is disjunctive over two categories and
+    a single field cannot say *which* one was found. The key set must equal the
+    policy's ``target_clause_categories``; that check needs the policy, so it is
+    made by :func:`require_policy_targets` at the node boundary rather than
+    here.
+    """
+
     decision: Decision
     rule_id: str
-    verification_status: VerificationStatus
-    evidence_ids: tuple[str, ...] = ()
-    adopted_upstream_claim_ids: tuple[str, ...] = ()
+    evidence_provenance: EvidenceProvenance
     confidence: float = Field(ge=0.0, le=1.0)
     reason_summary: str
     uncertainties: tuple[str, ...] = ()
+
+    @field_validator("target_clause_status")
+    @classmethod
+    def _require_target_status(
+        cls, value: dict[str, ClauseStatus]
+    ) -> dict[str, ClauseStatus]:
+        if not value:
+            raise ValueError(
+                "target_clause_status is empty; the policy's target categories "
+                "must each be assessed, and an agent that assessed none has not "
+                "answered the question"
+            )
+        blank = [key for key in value if not key.strip()]
+        if blank:
+            raise ValueError("target_clause_status has a blank category name")
+        return value
 
 
 class ManagerOutput(AgentOutput):
@@ -257,13 +416,56 @@ class ComplianceOutput(AgentOutput):
 
 
 class HiddenGold(BaseModel):
-    """Scoring labels. Must never enter a restricted view."""
+    """Scoring labels. Must never enter a restricted view.
+
+    ``gold_target_clause_status`` carries one label per policy target category,
+    mirroring the shape an agent is now required to answer in. Gold statuses are
+    drawn from ``present``/``absent`` only: a case is constructed knowing which
+    clauses it holds, so ``unknown`` is never a gold label and ``REVIEW`` is
+    never a gold action.
+
+    There is deliberately no single ``gold_clause_status`` field any more. A
+    contract-level label could only be a projection of this mapping, and the
+    projection is exactly what the per-category schema exists to stop the
+    agents from making. A caller that wants the status of the one category a
+    case is *about* asks for it by name via :meth:`status_for`.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    gold_clause_status: ClauseStatus
+    gold_target_clause_status: dict[str, ClauseStatus]
     gold_action: Decision
     gold_evidence_offsets: tuple[int, ...] = ()
+
+    @field_validator("gold_target_clause_status")
+    @classmethod
+    def _require_gold_status(
+        cls, value: dict[str, ClauseStatus]
+    ) -> dict[str, ClauseStatus]:
+        if not value:
+            raise ValueError("gold_target_clause_status is empty")
+        unresolved = sorted(
+            category
+            for category, status in value.items()
+            if status is not ClauseStatus.PRESENT and status is not ClauseStatus.ABSENT
+        )
+        if unresolved:
+            raise ValueError(
+                "a gold clause status must be present or absent, never unknown; "
+                f"got unknown for {unresolved!r}. A case is built knowing which "
+                "clauses it holds, so 'unknown' is a property of an agent's "
+                "evidence, not of the contract"
+            )
+        return value
+
+    def status_for(self, category: str) -> ClauseStatus:
+        """The gold status of one target category.
+
+        Raises ``KeyError`` rather than returning a default: a category the case
+        does not carry is a scoring bug, and a silent ``unknown`` would turn it
+        into a plausible-looking wrong answer.
+        """
+        return self.gold_target_clause_status[category]
 
 
 class OmissionRecord(BaseModel):

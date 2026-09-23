@@ -163,7 +163,17 @@ def test_every_positive_case_has_exactly_one_target_category_present():
             f"{record.case_id}: CUAD records {present} present, but the case names "
             f"{record.target_category!r} as its target"
         )
-        assert record.gold_clause_status is ClauseStatus.PRESENT
+        # Per category rather than one status for the contract: the mapping is
+        # what the policy is applied to, and a projection onto a single
+        # contract-level label is the thing it replaced.
+        assert (
+            record.gold_target_clause_status[record.target_category]
+            is ClauseStatus.PRESENT
+        )
+        assert set(record.gold_target_clause_status) == set(targets)
+        for category in targets:
+            if category != record.target_category:
+                assert record.gold_target_clause_status[category] is ClauseStatus.ABSENT
         assert record.gold_action is Decision.ESCALATE
 
 
@@ -177,7 +187,13 @@ def test_every_sentinel_has_both_target_categories_absent():
                 f"{record.case_id}: CUAD records {category!r} present, but the case "
                 "is a negative sentinel"
             )
-        assert record.gold_clause_status is ClauseStatus.ABSENT
+        # A sentinel is absent in *every* target category, which is what makes
+        # ACCEPT its gold action rather than a judgement call.
+        assert set(record.gold_target_clause_status) == set(targets)
+        assert all(
+            record.gold_target_clause_status[category] is ClauseStatus.ABSENT
+            for category in targets
+        )
         assert record.gold_action is Decision.ACCEPT
         assert record.gold_evidence_offsets == ()
         assert record.gold_evidence_texts == ()
@@ -372,7 +388,7 @@ def test_every_record_carries_the_fields_the_spec_names():
         "contract_text_hash",
         "target_category",
         "target_categories",
-        "gold_clause_status",
+        "gold_target_clause_status",
         "gold_evidence_offsets",
         "gold_action",
         "is_negative_sentinel",
@@ -454,7 +470,7 @@ def test_the_registry_and_the_record_are_self_consistent():
     for record in case_set.cases:
         spec = case_set.registry.get(record.case_id)
         assert spec.contract_id == record.contract_id
-        assert spec.gold_clause_status is record.gold_clause_status
+        assert spec.gold_target_clause_status == record.gold_target_clause_status
         assert spec.gold_action is record.gold_action
         assert spec.is_negative_sentinel == record.is_negative_sentinel
         assert spec.gold_evidence_offsets == record.gold_evidence_offsets

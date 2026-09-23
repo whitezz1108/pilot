@@ -117,7 +117,17 @@ class CaseSpec(BaseModel):
     memo: AnalystMemo
     """The correct (E0) memo. The E1 arm is derived from it, never written out."""
 
-    gold_clause_status: ClauseStatus
+    gold_target_clause_status: dict[str, ClauseStatus]
+    """One gold label per target clause category the policy names.
+
+    Keyed by category, mirroring the shape an agent now answers in, so the
+    comparison in scoring is per category rather than against a projection. A
+    case is constructed knowing which clauses its contract holds, so every label
+    here is ``present`` or ``absent`` -- ``unknown`` is never a gold value, and
+    the validator refuses it rather than letting a label that no agent could be
+    right about reach the scorer.
+    """
+
     gold_evidence_offsets: tuple[int, ...] = ()
     """Consecutive ``(start, end)`` pairs into the contract text. May be empty.
 
@@ -158,6 +168,38 @@ class CaseSpec(BaseModel):
             raise CaseRegistryError(f"case {self.case_id!r} has no contract text")
         if not self.target_category.strip():
             raise CaseRegistryError(f"case {self.case_id!r} has a blank target category")
+
+        if not self.gold_target_clause_status:
+            raise CaseRegistryError(
+                f"case {self.case_id!r} carries no gold clause labels; a case with "
+                "nothing to compare an assessment against cannot be scored"
+            )
+        labelled_unknown = sorted(
+            category
+            for category, status in self.gold_target_clause_status.items()
+            if status is ClauseStatus.UNKNOWN
+        )
+        if labelled_unknown:
+            raise CaseRegistryError(
+                f"case {self.case_id!r} labels {labelled_unknown} as "
+                f"{ClauseStatus.UNKNOWN.value}; the case is built from a contract "
+                "whose clauses are known, so no target category can be unknown in gold"
+            )
+        named = set(self.policy.target_clause_categories)
+        labelled = set(self.gold_target_clause_status)
+        if labelled != named:
+            raise CaseRegistryError(
+                f"case {self.case_id!r} labels target categories "
+                f"{sorted(labelled)!r}, but policy {self.policy.policy_id!r} names "
+                f"{sorted(named)!r}; missing={sorted(named - labelled)!r}, "
+                f"unexpected={sorted(labelled - named)!r}"
+            )
+        if self.target_category not in self.gold_target_clause_status:
+            raise CaseRegistryError(
+                f"case {self.case_id!r} is about category {self.target_category!r}, "
+                f"which is not one of the target categories {sorted(named)!r} that "
+                f"policy {self.policy.policy_id!r} names"
+            )
 
         if self.memo.case_id != self.case_id:
             raise CaseRegistryError(
@@ -247,13 +289,28 @@ class CaseSpec(BaseModel):
 
     @property
     def gold_action(self) -> Decision:
-        """The decision POLICY-01 requires, derived from the gold clause status.
+        """The decision POLICY-01 requires, derived from the gold clause labels.
 
         Derived rather than stored: :class:`~pilot01.workflow.state.ExperimentState`
         already refuses a gold label whose action disagrees with the policy, so a
         second, independently-declared copy could only ever disagree with it.
         """
-        return expected_decision(self.gold_clause_status, self.policy)
+        return expected_decision(self.gold_target_clause_status, self.policy)
+
+    def gold_status_for(self, category: str) -> ClauseStatus:
+        """The gold label for one target category.
+
+        A method rather than a property: it takes the category it is asked
+        about, and there is no category the case could default to without
+        re-introducing the contract-level projection the per-category mapping
+        exists to remove.
+        """
+        return self.gold_target_clause_status[category]
+
+    @property
+    def gold_target_category(self) -> str:
+        """The target category this case is *about* -- the one E1 removes."""
+        return self.target_category
 
     @property
     def contract_text_hash(self) -> str:

@@ -426,7 +426,7 @@ class ExperimentRunner:
             contract_text_hash=case.contract_text_hash,
             target_category=case.target_category,
             memo=self._registry.memo(job.case_id, job.error_condition),
-            gold_status=case.gold_clause_status,
+            gold_target_clause_status=case.gold_target_clause_status,
             policy=case.policy,
             gold_evidence_offsets=case.gold_evidence_offsets,
             omission=(

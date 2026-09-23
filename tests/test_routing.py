@@ -12,7 +12,13 @@ from pydantic import ValidationError
 import sample_case
 from pilot01.config import WorkflowConfig
 from pilot01.events import EventType
-from pilot01.schemas import ClauseStatus, Decision, ErrorCondition, VerificationStatus
+from pilot01.schemas import (
+    ClauseStatus,
+    Decision,
+    ErrorCondition,
+    VerificationBasis,
+    VerificationStatus,
+)
 from pilot01.workflow.nodes import FakeAgentScript, FakeCompliance, FakeManager
 from pilot01.workflow.runner import WorkflowRunner
 from pilot01.workflow.state import ExperimentState, RunStatus, TreatmentIntegrityError
@@ -350,7 +356,10 @@ def test_fake_agents_do_not_infer_absent_from_a_missing_claim(make_state, runner
         if state.policy.is_target_category(claim.category)
     ]
     assert targets == [], "fixture assumption: the E1 memo has no target claim"
-    assert state.manager_output.clause_status is ClauseStatus.PRESENT
+    assert (
+        state.manager_output.target_clause_status[sample_case.TARGET_CATEGORY]
+        is ClauseStatus.PRESENT
+    )
     assert state.compliance_output.decision is Decision.ESCALATE
 
 
@@ -404,7 +413,10 @@ def test_a_declared_omission_scenario_flows_through_unchanged(
     state = make_state("A0V0", ErrorCondition.E1)
     runner.run(state)
 
-    assert state.manager_output.clause_status is ClauseStatus.ABSENT
+    assert (
+        state.manager_output.target_clause_status[sample_case.TARGET_CATEGORY]
+        is ClauseStatus.ABSENT
+    )
     assert state.compliance_output.decision is Decision.ACCEPT
     assert state.hidden.gold.gold_action is Decision.ESCALATE
 
@@ -443,8 +455,16 @@ def test_a_declared_verification_outcome_flows_through_unchanged(
     runner = WorkflowRunner(workflow=workflow, conditions=conditions, registry=registry)
     output = runner.run(make_state("A1V1", ErrorCondition.E0)).state.compliance_output
 
-    assert output.verification_status is VerificationStatus.UNVERIFIABLE
-    assert output.clause_status is ClauseStatus.UNKNOWN
+    # v2 spells the declaration as a *basis* rather than a status. The point
+    # of the test is unchanged: what the fixture declared is what comes out.
+    assert (
+        output.evidence_provenance.verification_basis
+        is VerificationBasis.UNAVAILABLE
+    )
+    assert (
+        output.target_clause_status[sample_case.TARGET_CATEGORY]
+        is ClauseStatus.UNKNOWN
+    )
     assert output.decision is Decision.ESCALATE
 
 
@@ -541,7 +561,7 @@ def test_runner_refuses_an_E1_state_without_an_omission_record(
         contract_text_hash=sample_case.CONTRACT_TEXT_HASH,
         target_category=sample_case.TARGET_CATEGORY,
         memo=repository.load(sample_case.CASE_ID, ErrorCondition.E1),
-        gold_status=ClauseStatus.PRESENT,
+        gold_target_clause_status={sample_case.TARGET_CATEGORY: ClauseStatus.PRESENT, sample_case.OTHER_CLAUSE_CATEGORY: ClauseStatus.ABSENT},
         policy=policy,
         omission=None,  # E1 with no provenance record
     )

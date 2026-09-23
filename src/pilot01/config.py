@@ -52,6 +52,7 @@ __all__ = [
     "load_workflow_v1",
     "load_models_v1",
     "load_policy_v1",
+    "load_policy_v2",
     "policy_fingerprint",
 ]
 
@@ -399,11 +400,50 @@ class PolicyConfig(BaseModel):
     clause_status_mapping: dict[ClauseStatus, Decision]
     edge_cases: tuple[dict, ...] = ()
 
+    decision_if_target_unknown: Decision | None = None
+    """The action for an unresolved target clause.
+
+    Optional, and read off ``clause_status_mapping[unknown]`` when omitted.
+    That default is what lets ``policy_v1.yaml`` -- revision 1, whose bytes and
+    fingerprint are frozen into the Gate 4.5 report -- keep loading unchanged
+    while revision 2 states the value explicitly. A file that states it and a
+    file that does not therefore produce the same object, and the agreement
+    between the two statements is checked by :meth:`_check_mapping` rather than
+    trusted.
+
+    Deliberately absent from :meth:`fingerprint`: ``clause_status_mapping`` is
+    already hashed and already carries this value, so hashing it twice would
+    move the fingerprint of a file whose rule had not changed.
+    """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_unknown(cls, data: object) -> object:
+        """Fill ``decision_if_target_unknown`` from the stated mapping.
+
+        Runs before field validation because the model is frozen: this is the
+        point at which the value can still be supplied rather than assigned.
+        """
+        if not isinstance(data, dict) or data.get("decision_if_target_unknown") is not None:
+            return data
+        mapping = data.get("clause_status_mapping")
+        if not isinstance(mapping, dict):
+            return data
+        stated = mapping.get("unknown", mapping.get(ClauseStatus.UNKNOWN))
+        if stated is None:
+            return data
+        return {**data, "decision_if_target_unknown": stated}
+
     @model_validator(mode="after")
     def _check_mapping(self) -> "PolicyConfig":
         policy = self.to_policy()
+        # The mapping is stated per status, so it is checked with a
+        # single-category probe: a rule that disagrees with itself on one
+        # category disagrees on all of them, and the probe keeps the check
+        # independent of how many targets the policy names.
+        probe = self.target_clause_categories[0]
         for status, mapped in self.clause_status_mapping.items():
-            reference = expected_decision(status, policy)
+            reference = expected_decision({probe: status}, policy)
             if mapped is not reference:
                 raise WorkflowConfigError(
                     f"policy {self.policy_id!r} maps clause status {status.value!r} to "
@@ -422,12 +462,18 @@ class PolicyConfig(BaseModel):
 
     def to_policy(self) -> ExperimentalPolicy:
         """The core policy object the workflow renders and the scorer applies."""
+        if self.decision_if_target_unknown is None:  # pragma: no cover - validator fills it
+            raise WorkflowConfigError(
+                f"policy {self.policy_id!r} has no action for an unresolved target "
+                "clause and none could be read off clause_status_mapping"
+            )
         return ExperimentalPolicy(
             policy_id=self.policy_id,
             policy_version=self.policy_version,
             target_clause_categories=tuple(self.target_clause_categories),
             decision_if_target_present=self.decision_if_target_present,
             decision_if_target_absent=self.decision_if_target_absent,
+            decision_if_target_unknown=self.decision_if_target_unknown,
             description=self.description,
         )
 
@@ -465,8 +511,25 @@ def load_policy_v1(path: Path | None = None) -> PolicyConfig:
 
     Reads the rule and its rationale. No credential, no endpoint, no client,
     and no gold label: the policy names its triggers, never a case's status.
+
+    .. deprecated::
+       Revision 1 of POLICY-01. Its file is kept for provenance -- it is the
+       rule the Gate 4.5 development batch was run and scored under, and a
+       result that cannot name its own rule is not reproducible. It is not the
+       rule any current run uses: revision 1 maps ``unknown`` to ESCALATE, which
+       is the behaviour revision 2 exists to correct.
     """
     resolved = path or (policies_dir() / "policy_v1.yaml")
+    return PolicyConfig.model_validate(_load_yaml(resolved))
+
+
+def load_policy_v2(path: Path | None = None) -> PolicyConfig:
+    """Load and validate ``config/policies/policy_v2.yaml`` -- the current rule.
+
+    Revision 2 of POLICY-01. The difference from revision 1 is one edge: an
+    unresolved target clause maps to ``REVIEW`` rather than ``ESCALATE``.
+    """
+    resolved = path or (policies_dir() / "policy_v2.yaml")
     return PolicyConfig.model_validate(_load_yaml(resolved))
 
 

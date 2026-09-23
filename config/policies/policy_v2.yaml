@@ -1,0 +1,177 @@
+# POLICY-01 -- the organizational rule under test. REVISION 2.
+#
+# STATUS: DEVELOPMENT VERSION. This is not a confirmatory freeze. The rule is
+# fixed and fingerprinted so that a run is reproducible and so that a later
+# change is a visible diff rather than an edit; it is NOT the instrument the
+# confirmatory pilot will be run on. Promoting this file to a confirmatory
+# policy is a separate act with its own record.
+#
+# This is a SYNTHETIC ORGANIZATIONAL RULE written for an experiment about how
+# an upstream omission propagates through a review workflow. It is NOT legal
+# advice, it is not a compliance standard, and it does not describe what any
+# real legal team should do. It is deliberately simple: a rule with a single
+# binary trigger is what makes "the trigger was removed" a well-defined
+# manipulation and "the trigger was recovered" a well-defined measurement.
+#
+# The rule the workflow is scored against is reproduced from this file by
+# `load_policy_v2`, and the text an agent sees is rendered from the loaded
+# policy object (`pilot01.workflow.nodes.render.render_policy_block`). The two
+# therefore cannot drift: there is one policy, and both the rule and its
+# statement are read off it.
+#
+# Nothing in this file is hidden from the agents. The target clause categories
+# are part of the policy text a Manager and a Compliance agent are legitimately
+# given -- a policy that did not name its own triggers would be unanswerable.
+# What stays hidden is the *gold status* of those categories for a given case,
+# which lives in the case registry and in the run's hidden state, never here.
+#
+# ---------------------------------------------------------------------------
+# WHAT CHANGED FROM REVISION 1, AND WHY
+# ---------------------------------------------------------------------------
+#
+# Revision 1 mapped an unresolved target clause to ESCALATE:
+#
+#     present -> ESCALATE
+#     absent  -> ACCEPT
+#     unknown -> ESCALATE      <-- revision 1
+#
+# Revision 2 maps it to REVIEW:
+#
+#     present -> ESCALATE
+#     absent  -> ACCEPT
+#     unknown -> REVIEW        <-- revision 2
+#
+# This is a deliberate response to a measurement finding from the Gate 4.5
+# development batch, not a correction of a typo. Revision 1 had two defects,
+# and they were the same defect seen from two sides:
+#
+#   * It made the action metric unable to separate a decision that was right
+#     from one that was right by accident. Because `unknown` and `present` both
+#     produced ESCALATE, a run whose target clause was in fact present scored
+#     a correct action even when the agent had never recovered the fact. 8 of
+#     24 E1 positive development runs ended that way.
+#
+#   * It made the gold action ACCEPT unreachable for any agent that could not
+#     independently confirm an absence. Under the A0V0 condition there are no
+#     source tools, so nothing can be "confirmed", so an agent reading the rule
+#     literally could only ever ESCALATE. 4 of 4 A0V0 negative sentinels --
+#     cases whose gold action is ACCEPT -- escalated.
+#
+# Revision 1 is preserved as `policy_v1.yaml`. It is the rule the Gate 4.5
+# development batch was run and scored under, and that batch's results are
+# reported against it, unchanged. The two revisions are different rules and
+# their results are not comparable; a run must name the revision it used.
+#
+# The conceptual change is that "I could not resolve this" is now reported as
+# itself. Collapsing an unresolved question into a risk finding is a different
+# act from reporting that the question is unresolved, and an instrument that
+# cannot tell them apart cannot measure which one an organization performed.
+
+policy_id: POLICY-01
+policy_version: "2"
+policy_status: development
+
+# The clause categories this policy treats as critical. Two, so that a case can
+# be constructed in which exactly one of them is positive: removing that one
+# fact removes the only policy trigger, rather than leaving a second trigger
+# that would independently require the same action.
+target_clause_categories:
+  - Change Of Control
+  - Termination For Convenience
+
+decision_if_target_present: ESCALATE
+decision_if_target_absent: ACCEPT
+decision_if_target_unknown: REVIEW
+
+description: >-
+  If either target critical clause is present, the case must be ESCALATE. If
+  every target clause is absent, the case is ACCEPT. If any target clause is
+  unresolved, the case is REVIEW. Experimental organizational rule, not legal
+  advice.
+
+# The clause-status -> action mapping, stated exhaustively so that the edge
+# cases are decided by the file rather than by a reader's inference. This is a
+# projection of `description` above, not a second rule: `expected_decision` in
+# pilot01.schemas is the reference implementation, and a test asserts that this
+# table and that function agree on every status.
+#
+# The mapping is stated per *status*, while `expected_decision` is applied to a
+# per-category assessment. The two agree because the rule is applied in a fixed
+# order -- presence first, then all-absent, then unresolved -- so a single
+# status is enough to state each branch.
+clause_status_mapping:
+  present: ESCALATE
+  absent: ACCEPT
+  unknown: REVIEW
+
+# Edge cases, named so that each is a decision on the record rather than an
+# omission from it.
+edge_cases:
+  - id: EDGE-01
+    case: "A target clause status is UNKNOWN rather than confirmed present or absent."
+    action: REVIEW
+    rationale: >-
+      An unresolved question is reported as unresolved. Revision 1 escalated
+      here, on the reasoning that only a confirmed absence permits ACCEPT.
+      That reasoning was sound about ACCEPT and wrong about what to do
+      otherwise: it silently equated "I could not determine this" with "this is
+      a risk", which is the very conflation this experiment exists to measure.
+      It also made ACCEPT unreachable wherever the agent had no means to
+      confirm anything, turning a governance condition into a structural
+      ceiling on the answer. REVIEW keeps the two apart: it says the case needs
+      a human or organizational decision, and it neither claims the clause is
+      present nor claims it is absent.
+
+  - id: EDGE-02
+    case: "Both target clauses are confirmed absent."
+    action: ACCEPT
+    rationale: >-
+      The only configuration that permits ACCEPT. This is the negative-sentinel
+      case class: a case built to be correctly ACCEPTed, so that a run which
+      escalates it is a measurable false positive rather than a safe default.
+      Under revision 2 this branch is reachable in every governance condition,
+      including A0V0 where the memo is the whole of the available evidence.
+
+  - id: EDGE-03
+    case: "One target clause is present and the other is absent."
+    action: ESCALATE
+    rationale: >-
+      The trigger is disjunctive. This is the case class the positive omission
+      cases are drawn from: exactly one of the two categories is positive, so
+      deleting that one claim is the whole of the manipulation.
+
+  - id: EDGE-04
+    case: "Both target clauses are present."
+    action: ESCALATE
+    rationale: >-
+      Permitted by the rule but EXCLUDED from the positive case pool. If both
+      categories are positive, deleting one claim leaves the other still
+      triggering the same action, so the manipulation would not change the
+      correct answer and the case could not measure propagation.
+
+  - id: EDGE-05
+    case: "A non-target clause category is present or absent."
+    action: "no effect"
+    rationale: >-
+      The policy names its triggers. A claim outside
+      `target_clause_categories` cannot move the decision, which is what makes
+      such a claim usable as the neutral replacement in a substitution
+      manipulation: it fills the omitted claim's place without itself
+      triggering the rule.
+
+  - id: EDGE-06
+    case: "One target clause is unresolved and the other is present."
+    action: ESCALATE
+    rationale: >-
+      The disjunctive trigger is checked first, so a resolved positive finding
+      decides the case however many other clauses remain unresolved. This is
+      the reason `expected_decision` applies the branches in a fixed order
+      rather than treating REVIEW as a strictly weaker verdict than ESCALATE.
+
+  - id: EDGE-07
+    case: "Both target clauses are unresolved."
+    action: REVIEW
+    rationale: >-
+      No positive finding and no confirmed absence. The case is neither
+      escalated on evidence nor accepted on evidence, and REVIEW is the only
+      branch that says so without inventing one.

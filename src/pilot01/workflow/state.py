@@ -20,6 +20,7 @@ Two structural protections live here:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -37,6 +38,7 @@ from ..schemas import (
     ManagerOutput,
     OmissionRecord,
     expected_decision,
+    require_policy_targets,
 )
 
 if TYPE_CHECKING:  # import cycle: pilot01.config imports pilot01.workflow.transitions
@@ -114,12 +116,18 @@ class ExperimentState(BaseModel):
 
     @model_validator(mode="after")
     def _check_gold_consistency(self) -> "ExperimentState":
-        expected = expected_decision(self.hidden.gold.gold_clause_status, self.policy)
-        if self.hidden.gold.gold_action is not expected:
+        gold = self.hidden.gold
+        require_policy_targets(gold.gold_target_clause_status, self.policy)
+        expected = expected_decision(gold.gold_target_clause_status, self.policy)
+        if gold.gold_action is not expected:
+            assessed = ", ".join(
+                f"{category}={status.value}"
+                for category, status in sorted(gold.gold_target_clause_status.items())
+            )
             raise TreatmentIntegrityError(
-                f"gold label inconsistency: gold_action={self.hidden.gold.gold_action.value} "
-                f"but POLICY-01 maps gold_clause_status="
-                f"{self.hidden.gold.gold_clause_status.value} to {expected.value}"
+                f"gold label inconsistency: gold_action={gold.gold_action.value} "
+                f"but policy {self.policy.policy_id!r} maps "
+                f"gold_target_clause_status=[{assessed}] to {expected.value}"
             )
         if self.analyst_memo.case_id != self.case_id:
             raise TreatmentIntegrityError(
@@ -144,7 +152,7 @@ class ExperimentState(BaseModel):
         contract_text_hash: str,
         target_category: str,
         memo: AnalystMemo,
-        gold_status: ClauseStatus,
+        gold_target_clause_status: Mapping[str, ClauseStatus],
         policy: ExperimentalPolicy,
         gold_evidence_offsets: tuple[int, ...] = (),
         omission: OmissionRecord | None = None,
@@ -184,8 +192,10 @@ class ExperimentState(BaseModel):
             analyst_memo=memo,
             hidden=HiddenExperimentData(
                 gold=HiddenGold(
-                    gold_clause_status=gold_status,
-                    gold_action=expected_decision(gold_status, active_policy),
+                    gold_target_clause_status=dict(gold_target_clause_status),
+                    gold_action=expected_decision(
+                        gold_target_clause_status, active_policy
+                    ),
                     gold_evidence_offsets=gold_evidence_offsets,
                 ),
                 omission=omission,

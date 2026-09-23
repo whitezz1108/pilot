@@ -297,7 +297,16 @@ class SelectedCase(BaseModel):
     target_categories: tuple[str, ...]
     """The policy's full target list, so the record is self-describing."""
 
-    gold_clause_status: ClauseStatus
+    gold_target_clause_status: dict[str, ClauseStatus]
+    """One gold label per target category the policy names.
+
+    The pool rule in :func:`_check_contract` already fixes both labels: a
+    positive contract must hold the target category and must not hold the other
+    (``BOTH_TARGETS_PRESENT`` rejects it), and a sentinel contract must hold
+    neither. So this mapping is not a new judgement -- it is the eligibility
+    rule written in the shape the scorer compares against.
+    """
+
     gold_evidence_offsets: tuple[int, ...]
     gold_action: Decision
     is_negative_sentinel: bool
@@ -669,6 +678,14 @@ def selection_fingerprint(cases: Sequence[SelectedCase], seed: int) -> str:
     contract ids, the target categories and the gold offsets, in order. Two
     selections that agree on this fingerprint are the same development set,
     whatever else differs about how they were written down.
+
+    The per-category mapping is hashed through the *case's own* target category,
+    not as a whole. That is the single value the pre-per-category field held, so
+    the material is byte-for-byte what it was before the mapping was introduced
+    and the frozen Gate 4.5 fingerprint is preserved. Hashing the whole mapping
+    instead would move the fingerprint of a selection that had not changed --
+    and the other category is ``absent`` in every pool by construction, so it
+    carries no information the fingerprint needs.
     """
     digest = hashlib.sha256()
     digest.update(f"gate4-development-selection/v1\nseed={seed}\n".encode())
@@ -676,7 +693,7 @@ def selection_fingerprint(cases: Sequence[SelectedCase], seed: int) -> str:
         digest.update(
             (
                 f"{case.case_id}\t{case.contract_id}\t{case.target_category}\t"
-                f"{case.gold_clause_status.value}\t"
+                f"{case.gold_target_clause_status[case.target_category].value}\t"
                 f"{','.join(str(value) for value in case.gold_evidence_offsets)}\n"
             ).encode()
         )
@@ -805,11 +822,25 @@ def select_development_cases(
         # A sentinel has both targets absent, so either one can be named as "the"
         # target. Alternating them keeps both categories represented among the
         # sentinels, which matters because the case record states one category.
+        #
+        # ``other_category`` is relabelled with it, not left as the pool's
+        # original choice. The two fields are a pair -- ``other_category`` means
+        # "the *other* policy target" -- and relabelling only the first made
+        # them collide whenever the alternation picked the second target, so a
+        # sentinel could describe itself as being about one category while
+        # naming the same category as the other one. The pool builds its
+        # candidates with ``target=first, other=second`` and this loop is free
+        # to rename the target afterwards, so the pair has to move together.
         target = policy_targets[index % len(policy_targets)]
+        other = next(
+            category for category in policy_targets if category != target
+        )
         selected.append(
             _to_selected_case(
                 annotations.by_id(candidate.contract_id),
-                candidate.model_copy(update={"target_category": target}),
+                candidate.model_copy(
+                    update={"target_category": target, "other_category": other}
+                ),
                 kind="sentinel",
                 policy_targets=policy_targets,
                 policy_version=policy_version,
@@ -878,7 +909,10 @@ def _to_selected_case(
         contract_text_hash=contract.text_hash,
         target_category=candidate.target_category,
         target_categories=tuple(policy_targets),
-        gold_clause_status=candidate.gold_status,
+        gold_target_clause_status={
+            candidate.target_category: candidate.gold_status,
+            candidate.other_category: ClauseStatus.ABSENT,
+        },
         gold_evidence_offsets=tuple(
             value for span in candidate.spans for value in span
         ),

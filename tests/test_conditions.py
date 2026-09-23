@@ -30,6 +30,7 @@ from pilot01.schemas import (
     ErrorCondition,
     ExperimentalPolicy,
     HiddenGold,
+    expected_decision,
     policy_01,
 )
 from pilot01.workflow.state import ExperimentState, TreatmentIntegrityError
@@ -269,7 +270,10 @@ def test_gold_must_be_consistent_with_the_policy(make_state):
         **state.model_dump(),
         "hidden": {
             "gold": HiddenGold(
-                gold_clause_status=ClauseStatus.PRESENT,
+                gold_target_clause_status={
+                    sample_case.TARGET_CATEGORY: ClauseStatus.PRESENT,
+                    sample_case.OTHER_CLAUSE_CATEGORY: ClauseStatus.ABSENT,
+                },
                 gold_action=Decision.ACCEPT,  # POLICY-01 says ESCALATE
             )
         },
@@ -281,14 +285,56 @@ def test_gold_must_be_consistent_with_the_policy(make_state):
 
 
 def test_gold_action_follows_policy_01(make_state):
+    """Gold is drawn from ``present``/``absent`` only, and maps as the rule says.
+
+    There is deliberately no ``unknown`` case here any more. ``unknown`` used to
+    be a gold label -- the correct reading of an omission memo was "the status
+    is unresolved", and revision 1 escalated that -- but a gold label is a
+    property of the *contract*, which is built knowing which clauses it holds.
+    ``unknown`` is a property of an *agent's evidence*, so it is not a gold
+    value and the schema refuses it. What the policy does with an agent that
+    reports it is asserted in
+    :func:`test_the_policy_maps_an_unresolved_assessment_to_review`.
+    """
     present = make_state("A0V0", gold_status=ClauseStatus.PRESENT)
     absent = make_state("A0V0", gold_status=ClauseStatus.ABSENT)
-    unknown = make_state("A0V0", gold_status=ClauseStatus.UNKNOWN)
 
     assert present.hidden.gold.gold_action.value == "ESCALATE"
     assert absent.hidden.gold.gold_action.value == "ACCEPT"
-    # POLICY-01 permits ACCEPT only on a confirmed absence.
-    assert unknown.hidden.gold.gold_action.value == "ESCALATE"
+
+
+def test_gold_refuses_an_unknown_label(make_state):
+    """A case cannot be labelled unknown: the contract's clauses are known."""
+    with pytest.raises(ValidationError, match="never unknown"):
+        make_state("A0V0", gold_status=ClauseStatus.UNKNOWN)
+
+
+def test_the_policy_maps_an_unresolved_assessment_to_review():
+    """An agent's ``unknown`` is REVIEW, and the gold action is never REVIEW.
+
+    The two halves of the revision-2 rule, asserted together because they are
+    the same design decision seen from either side: unresolved is reported as
+    unresolved, and a case is never *built* unresolved.
+    """
+    policy = sample_case.build_policy()
+    statuses = {
+        sample_case.TARGET_CATEGORY: ClauseStatus.UNKNOWN,
+        sample_case.OTHER_CLAUSE_CATEGORY: ClauseStatus.ABSENT,
+    }
+    assert expected_decision(statuses, policy) is Decision.REVIEW
+
+    # Presence still wins over an unresolved sibling: the trigger is
+    # disjunctive, so one positive clause decides the case.
+    assert (
+        expected_decision(
+            {
+                sample_case.TARGET_CATEGORY: ClauseStatus.UNKNOWN,
+                sample_case.OTHER_CLAUSE_CATEGORY: ClauseStatus.PRESENT,
+            },
+            policy,
+        )
+        is Decision.ESCALATE
+    )
 
 
 def test_E0_and_E1_share_contract_metadata_and_gold(make_state):
@@ -333,6 +379,7 @@ def test_policy_rejects_empty_target_categories():
             target_clause_categories=(),
             decision_if_target_present=Decision.ESCALATE,
             decision_if_target_absent=Decision.ACCEPT,
+            decision_if_target_unknown=Decision.REVIEW,
             description="",
         )
 

@@ -45,6 +45,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 from pilot01.config import load_conditions_v1  # noqa: E402
 from pilot01.experiment.cases import CaseRegistry  # noqa: E402
 from pilot01.experiment.development import build_gate4_development_set  # noqa: E402
+from pilot01.prompts import CURRENT_VERSION as PROMPT_VERSION  # noqa: E402
 from pilot01.schemas import ErrorCondition  # noqa: E402
 from pilot01.workflow.nodes.compliance import build_compliance_messages  # noqa: E402
 from pilot01.workflow.nodes.manager import build_manager_messages  # noqa: E402
@@ -57,8 +58,22 @@ from pilot01.workflow.views import (  # noqa: E402
     build_manager_view,
 )
 
-REVIEW_VERSION = "1"
+REVIEW_VERSION = "2"
+"""Bumped with the prompt revision under review.
+
+The Gate-4 review (version 1) reviewed ``*_v1.md`` and its record is
+``outputs/development/prompt_review.json``. This review reads whichever prompt
+revision :data:`pilot01.prompts.CURRENT_VERSION` names and writes its own
+version-suffixed record, so the Gate-4 finding stays readable and unedited
+rather than being silently replaced by a review of different text.
+"""
+
 OUT_DIR = REPO_ROOT / "outputs" / "development"
+
+
+def _prompt_path(role: str) -> Path:
+    """The path of a role's prompt at the revision under review."""
+    return REPO_ROOT / "prompts" / f"{role}_{PROMPT_VERSION}.md"
 
 TREATMENT_LABELS = ("E0", "E1", "A0V0", "A1V0", "A1V1", "A0V1")
 
@@ -97,7 +112,7 @@ def _state(registry: CaseRegistry, case_id: str, error_condition: ErrorCondition
         contract_text_hash=spec.contract_text_hash,
         target_category=spec.target_category,
         memo=registry.memo(case_id, error_condition),
-        gold_status=spec.gold_clause_status,
+        gold_target_clause_status=spec.gold_target_clause_status,
         policy=spec.policy,
         gold_evidence_offsets=spec.gold_evidence_offsets,
         omission=registry.omission_record(case_id),
@@ -114,23 +129,43 @@ def _compliance_view(registry: CaseRegistry, case_id: str, error_condition, cond
     generous: it cites every claim the memo holds, so if the prompt were going to
     leak a claim id or a summary there would be something to leak.
     """
-    from pilot01.schemas import ClauseStatus, Decision, ManagerOutput, VerificationStatus
+    from pilot01.schemas import (
+        ClauseStatus,
+        Decision,
+        EvidenceProvenance,
+        ManagerOutput,
+        VerificationBasis,
+    )
     from pilot01.workflow.views import build_compliance_view as _build
 
     spec = registry.get(case_id)
     state = _state(registry, case_id, error_condition, condition_id)
     memo = state.analyst_memo
+    # The stand-in declares ``upstream_only`` rather than ``self_checked``: it
+    # cites only what the memo handed it, which is exactly what a Manager with
+    # no source access could honestly write. Declaring ``self_checked`` here
+    # would put a false verification claim into the rendered Compliance prompt
+    # and make the review read a handoff no real run could produce.
     handoff = ManagerOutput(
-        clause_status=ClauseStatus.PRESENT,
+        target_clause_status={
+            category: (
+                ClauseStatus.PRESENT
+                if category == spec.target_category
+                else ClauseStatus.ABSENT
+            )
+            for category in spec.policy.target_clause_categories
+        },
         decision=Decision.ESCALATE,
         rule_id=spec.policy.policy_id,
-        verification_status=VerificationStatus.NOT_CHECKED,
+        evidence_provenance=EvidenceProvenance(
+            upstream_claim_ids=tuple(claim.claim_id for claim in memo.claims),
+            inherited_source_ids=tuple(
+                source_id for claim in memo.claims for source_id in claim.source_ids
+            ),
+            verification_basis=VerificationBasis.UPSTREAM_ONLY,
+        ),
         confidence=0.5,
         reason_summary="development stand-in handoff for the §10 prompt review",
-        evidence_ids=tuple(
-            source_id for claim in memo.claims for source_id in claim.source_ids
-        ),
-        adopted_upstream_claim_ids=tuple(claim.claim_id for claim in memo.claims),
         uncertainties=(),
     )
     return _build(state.model_copy(update={"manager_output": handoff}))
@@ -333,7 +368,8 @@ def review(registry: CaseRegistry, annotations) -> dict:
     #
     # What "cannot see the memo" means here needs stating, because the obvious
     # reading is too strong. Compliance *does* receive claim ids -- through
-    # ``adopted_upstream_claim_ids``, a field of the Manager's handoff, which is
+    # ``evidence_provenance.upstream_claim_ids``, a field of the Manager's
+    # handoff, which is
     # the designed propagation channel and the thing the experiment measures.
     # What it must not receive is the memo itself: the memo block, the memo id,
     # the claim summaries, or the memo's own category/status/source listing.
@@ -365,7 +401,7 @@ def review(registry: CaseRegistry, annotations) -> dict:
                         failures.append(f"{case_id}/{condition_id}: claim summary")
                     # A claim id may appear only because the handoff carried it.
                     if claim.claim_id in text and claim.claim_id not in (
-                        view.manager_output.adopted_upstream_claim_ids
+                        view.manager_output.evidence_provenance.upstream_claim_ids
                     ):
                         failures.append(
                             f"{case_id}/{condition_id}: claim id {claim.claim_id} "
@@ -443,20 +479,20 @@ def review(registry: CaseRegistry, annotations) -> dict:
 
     # -- 11. the output schema is the one the parser expects ---------------
     failures = []
-    manager_fields = {
-        "clause_status",
-        "decision",
-        "rule_id",
-        "verification_status",
-        "confidence",
-        "reason_summary",
-        "evidence_ids",
-        "adopted_upstream_claim_ids",
-        "uncertainties",
-    }
-    for prompt_id, fields in (("manager", manager_fields), ("compliance", manager_fields)):
-        text = (REPO_ROOT / "prompts" / f"{prompt_id}_v1.md").read_text(encoding="utf-8")
-        for field in sorted(fields):
+    # Read off the schema rather than restated here: a hand-maintained list is
+    # exactly the thing that goes stale when a field is renamed, and a stale
+    # list would keep passing while the prompt documented a field the parser
+    # no longer accepts.
+    from pilot01.schemas import AgentOutput, EvidenceProvenance
+
+    # The nested keys count as documented fields too. A prompt that named
+    # ``evidence_provenance`` but never said which keys it holds would leave the
+    # model to guess the shape, and the shape is what carries the provenance
+    # split the experiment measures.
+    manager_fields = set(AgentOutput.model_fields) | set(EvidenceProvenance.model_fields)
+    for prompt_id in ("manager", "compliance"):
+        text = _prompt_path(prompt_id).read_text(encoding="utf-8")
+        for field in sorted(manager_fields):
             if f"`{field}`" not in text:
                 failures.append(f"{prompt_id}: field {field} not documented")
     checks.append(
@@ -493,6 +529,7 @@ def review(registry: CaseRegistry, annotations) -> dict:
             ),
             "what_was_observed": (
                 "`manager_v1.md` and `compliance_v1.md` each contain a static "
+                "(and the later manager/compliance revisions likewise) "
                 "'# SOURCE TOOLS' section naming `search_contract` and "
                 "`open_source_span`, plus the JSON envelope for calling one. The "
                 "section is introduced conditionally -- 'When the GOVERNANCE "
@@ -530,10 +567,20 @@ def review(registry: CaseRegistry, annotations) -> dict:
                 "known explanation."
             ),
             "would_require": (
-                "A new development prompt version (`manager_v2.md`, "
-                "`compliance_v2.md`), the v1 files preserved, the full regression "
+                "A new development prompt version, the previous files preserved, "
+                "the full regression "
                 "suite re-run, and the change documented -- per §10. Not a "
                 "confirmatory prompt freeze either way."
+            ),
+            "status_at_this_revision": (
+                "STILL OPEN, and the current revision does not close it. The "
+                "later prompts were written for a different reason -- the design "
+                "feedback on the A1V0/A1V1 contrast, the REVIEW branch and the "
+                "provenance split -- and their SOURCE TOOLS section carries the "
+                "same unconditional calling instructions as v1. Nothing in this "
+                "review should be read as a fix for FINDING-01."
+                if PROMPT_VERSION != "1"
+                else "OPEN at the revision reviewed here."
             ),
         }
     ]
@@ -549,10 +596,11 @@ def review(registry: CaseRegistry, annotations) -> dict:
             "confirmatory prompt freeze."
         ),
         "prompt_versions": {
-            "manager": "manager_v1",
-            "compliance": "compliance_v1",
-            "repair": "repair_v1",
+            "manager": f"manager_{PROMPT_VERSION}",
+            "compliance": f"compliance_{PROMPT_VERSION}",
+            "repair": f"repair_{PROMPT_VERSION}",
         },
+        "prompt_version_under_review": PROMPT_VERSION,
         "prompt_files_unchanged_by_this_review": True,
         "cases_reviewed": len(cases),
         "positive_cases": len(positives),
@@ -613,6 +661,7 @@ def render_markdown(payload: dict) -> str:
             "residual_risk",
             "action_taken",
             "would_require",
+            "status_at_this_revision",
         ):
             lines.append(f"**{key.replace('_', ' ')}:** {finding[key]}")
             lines.append("")
@@ -633,8 +682,12 @@ def main(argv: list[str] | None = None) -> int:
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    json_path = out_dir / "prompt_review.json"
-    md_path = out_dir / "prompt_review.md"
+    # Version-suffixed for every revision after the first, so reviewing the new
+    # prompts cannot overwrite the Gate-4 review of the old ones. ``--out-dir``
+    # still lets a caller put them wherever it likes.
+    suffix = "" if PROMPT_VERSION == "1" else f"_{PROMPT_VERSION}"
+    json_path = out_dir / f"prompt_review{suffix}.json"
+    md_path = out_dir / f"prompt_review{suffix}.md"
     json_path.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n", encoding="utf-8")
     md_path.write_text(render_markdown(payload), encoding="utf-8")
 

@@ -328,7 +328,7 @@ def _state(case_id: str, error_condition: ErrorCondition):
         contract_text_hash=spec.contract_text_hash,
         target_category=spec.target_category,
         memo=g4.registry().memo(case_id, error_condition),
-        gold_status=spec.gold_clause_status,
+        gold_target_clause_status=dict(spec.gold_target_clause_status),
         policy=spec.policy,
         gold_evidence_offsets=spec.gold_evidence_offsets,
         omission=g4.registry().omission_record(case_id),

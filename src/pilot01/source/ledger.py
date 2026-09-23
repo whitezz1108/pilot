@@ -1,10 +1,10 @@
 """What one node actually looked at.
 
 The problem this module exists to prevent is a specific, easy-to-miss failure:
-an agent writes ``"evidence_ids": ["3f9a1c0d2e4b:p0017"]`` having never opened
-``3f9a1c0d2e4b:p0017`` -- it saw the id in a search result, or in the upstream
-handoff, or it made it up -- and a naive pipeline records that as "verified
-against source". A verification claim is only worth what the access ledger says
+an agent writes ``"opened_paragraph_ids": ["3f9a1c0d2e4b:p0017"]`` having never
+opened ``3f9a1c0d2e4b:p0017`` -- it saw the id in a search result, or in the
+upstream handoff, or it made it up -- and a naive pipeline records that as
+"verified against source". A verification claim is only worth what the access ledger says
 it is worth, so the ledger is kept per node, per invocation, and is the thing
 verification is checked against.
 
@@ -21,9 +21,10 @@ each other, because later scoring needs the difference:
 
 ``UPSTREAM_CITED``
     The id arrived in the material this node was *given* -- the analyst memo's
-    cited source ids for the Manager, the Manager's ``evidence_ids`` for
-    Compliance. Legitimate provenance, and exactly the thing the pilot measures
-    the adoption of; it is not evidence this node gathered.
+    cited source ids for the Manager, the Manager's
+    ``evidence_provenance.inherited_source_ids`` for Compliance. Legitimate
+    provenance, and exactly the thing the pilot measures the adoption of; it is
+    not evidence this node gathered.
 
 ``UNKNOWN``
     None of the above. An id the node could not have obtained from anywhere it
@@ -159,11 +160,19 @@ class EvidenceLedger:
         if paragraph_id not in self._opened_ids:
             self._opened_ids.append(paragraph_id)
 
-    def record_upstream(self, evidence_ids: Iterable[str]) -> None:
-        """Record ids this node was *given* rather than gathered itself."""
-        for evidence_id in evidence_ids:
-            if evidence_id not in self._upstream_ids:
-                self._upstream_ids.append(evidence_id)
+    def record_upstream(self, upstream_ids: Iterable[str]) -> None:
+        """Record ids this node was *given* rather than gathered itself.
+
+        Fed from the previous stage's ``inherited_source_ids`` -- the ids that
+        stage reported relying on without opening. The previous stage's own
+        ``opened_paragraph_ids`` are not passed here: a paragraph that stage
+        opened is not something this node was given, and treating it as such
+        would let a downstream citation of it classify as upstream rather than
+        as a fabrication the anti-fabrication check should catch.
+        """
+        for upstream_id in upstream_ids:
+            if upstream_id not in self._upstream_ids:
+                self._upstream_ids.append(upstream_id)
 
     # -- inspection --------------------------------------------------------
 

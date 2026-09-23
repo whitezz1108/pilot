@@ -177,7 +177,20 @@ def make_state(conditions, repository, omission_record, policy):
         run_id: str = "run-0001",
         repetition_id: int = 0,
         gold_status: ClauseStatus = ClauseStatus.PRESENT,
+        gold_target_clause_status: dict[str, ClauseStatus] | None = None,
     ) -> ExperimentState:
+        # ``gold_status`` is the pre-per-category spelling and means "the status
+        # of the category this case is about"; the other target category is
+        # absent, which is what the fixture contract holds. Pass
+        # ``gold_target_clause_status`` to state both explicitly.
+        statuses = (
+            gold_target_clause_status
+            if gold_target_clause_status is not None
+            else {
+                sample_case.TARGET_CATEGORY: gold_status,
+                sample_case.OTHER_CLAUSE_CATEGORY: ClauseStatus.ABSENT,
+            }
+        )
         return ExperimentState.create(
             run_id=run_id,
             case_id=sample_case.CASE_ID,
@@ -189,7 +202,7 @@ def make_state(conditions, repository, omission_record, policy):
             contract_text_hash=sample_case.CONTRACT_TEXT_HASH,
             target_category=sample_case.TARGET_CATEGORY,
             memo=repository.load(sample_case.CASE_ID, error_condition),
-            gold_status=gold_status,
+            gold_target_clause_status=statuses,
             policy=policy,
             gold_evidence_offsets=GOLD_OFFSET_SENTINELS,
             omission=None if error_condition is ErrorCondition.E0 else omission_record,

@@ -131,13 +131,20 @@ def build_compliance_messages(view: ComplianceInput) -> tuple[ModelMessage, ...]
 def compliance_upstream_ids(view: ComplianceInput) -> tuple[str, ...]:
     """The ids Compliance was *given*, rather than gathered.
 
-    Exactly the handoff's own ``evidence_ids``. Compliance may legitimately cite
-    them -- they are what the Manager handed over -- but citing one is not
-    verification, and the ledger keeps it in a different class from a paragraph
-    Compliance opened itself. This is the whole of the UPSTREAM-CITED /
-    SELF-VERIFIED distinction, expressed as one function with one source.
+    Exactly the handoff's ``inherited_source_ids``: the sources the Manager
+    relied on because the memo cited them, which Compliance now receives in
+    turn. Compliance may legitimately cite them -- they are what the Manager
+    handed over -- but citing one is not verification, and the ledger keeps it
+    in a different class from a paragraph Compliance opened itself. This is the
+    whole of the UPSTREAM-CITED / SELF-VERIFIED distinction, expressed as one
+    function with one source.
+
+    The handoff's ``opened_paragraph_ids`` are deliberately *not* included. A
+    paragraph the Manager opened is evidence the Manager gathered, and passing
+    it downstream as an id Compliance was "given" would let Compliance's
+    citation of it read as independent verification of a passage it never saw.
     """
-    return tuple(view.manager_output.evidence_ids)
+    return tuple(view.manager_output.evidence_provenance.inherited_source_ids)
 
 
 def make_llm_compliance_node(

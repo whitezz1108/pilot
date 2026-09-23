@@ -266,6 +266,7 @@ def test_resume_moves_an_interrupted_run_aside_and_reruns_it(tmp_path):
         0,
         1,
         2,
+        3,
     ]
     assert "half a run" not in (directory / MODEL_CALLS_JSONL).read_text(encoding="utf-8")
     detail = next(r for r in batch.results if r.run_id == job.run_id).detail

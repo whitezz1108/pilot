@@ -47,6 +47,7 @@ from pilot01.config import (  # noqa: E402
     load_conditions_v1,
     load_models_v1,
     load_policy_v1,
+    load_policy_v2,
     policy_fingerprint,
 )
 from pilot01.experiment.cli import (  # noqa: E402
@@ -71,6 +72,31 @@ DEFAULT_OUTPUT_ROOT = "outputs"
 DEVELOPMENT_DIR = "development"
 DEFAULT_EXPERIMENT_ID = "gate4-development"
 DEFAULT_PLAN_SEED = 0
+
+POLICY_LOADERS = {"1": load_policy_v1, "2": load_policy_v2}
+"""The policy revisions this script can build a set under, by version string.
+
+Both are reachable on purpose. The default is revision 2, because a set built
+for a new run must carry the rule that run is scored against. Revision 1 stays
+reachable so the Gate-4 artifacts can be reproduced byte-for-byte from the same
+script, which is what makes them auditable rather than merely stored.
+"""
+
+DEFAULT_POLICY_VERSION = "2"
+"""The revision a new development set is built under unless one is named."""
+
+
+def registry_filename(version: str = DEFAULT_POLICY_VERSION) -> str:
+    """The registry filename one policy revision writes.
+
+    The one place the naming rule lives. Revision 1 keeps the unsuffixed name it
+    was written under, so the Gate-4 record's references to ``cases_v1.json``
+    still resolve; every later revision writes its own file beside it. Anything
+    that needs to *read* a registry -- the smoke, the checks -- asks here rather
+    than spelling the name out, so a reader cannot pick up a file written by a
+    different revision than the one the pipeline runs.
+    """
+    return f"cases_v1{'' if version == '1' else f'_v{version}'}.json"
 """The plan's *order* seed, which is a different decision from the selection seed.
 
 Selection picks which contracts; the plan seed shuffles the order they run in.
@@ -84,13 +110,32 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--experiment-id", default=DEFAULT_EXPERIMENT_ID)
     parser.add_argument("--plan-seed", type=int, default=DEFAULT_PLAN_SEED)
+    parser.add_argument(
+        "--policy-version",
+        choices=sorted(POLICY_LOADERS),
+        default=DEFAULT_POLICY_VERSION,
+        help=(
+            "POLICY-01 revision to build the set under. Every revision writes "
+            "its own filenames, so building revision 1 again reproduces the "
+            "Gate-4 artifacts without overwriting the revision-2 ones."
+        ),
+    )
     args = parser.parse_args(argv)
 
     out_root = Path(args.out)
     development_dir = out_root / DEVELOPMENT_DIR
     development_dir.mkdir(parents=True, exist_ok=True)
 
-    print("Gate 4 development build -- offline, no model call is made")
+    # Revision-suffixed artifact names. Revision 1 keeps the unsuffixed names it
+    # was written under, so its files are still exactly where the Gate-4 record
+    # says they are; every later revision gets its own set beside them.
+    version = args.policy_version
+    stem = "" if version == "1" else f"_v{version}"
+
+    print(
+        f"Gate 4 development build -- offline, no model call is made "
+        f"(POLICY-01 revision {version})"
+    )
     print()
 
     # -- 1-5. the offline pipeline, from the frozen annotations to the set --
@@ -98,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
     # and the cases the prompt review and the tests read are built by the same
     # code. A copy of the sequence here would be a second answer to "what is the
     # Gate-4 development set".
-    build = build_gate4_development_set()
+    build = build_gate4_development_set(policy=POLICY_LOADERS[version]())
     annotations = build.annotations
     policy_config = build.policy
     policy = policy_config.to_policy()
@@ -128,20 +173,24 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  pool sizes: {dict((k, len(v)) for k, v in selection.candidates.items())}")
     print(f"  exclusions: {selection.exclusion_counts()}")
 
-    (development_dir / "selection_audit.json").write_text(
+    (development_dir / f"selection_audit{stem}.json").write_text(
         json.dumps(selection.to_payload(), indent=2) + "\n", encoding="utf-8"
     )
 
     print(f"memos: {len(plans)} E0 memo(s) built")
 
-    registry_path = case_set.registry.write_json(development_dir / "cases_v1.json")
-    record_path = case_set.write_json(development_dir / "development_cases_v1.json")
+    registry_path = case_set.registry.write_json(
+        development_dir / registry_filename(version)
+    )
+    record_path = case_set.write_json(
+        development_dir / f"development_cases_v1{stem}.json"
+    )
     print(f"registry: {registry_path} ({len(case_set.registry)} case(s))")
     print(f"record:   {record_path}")
 
     # -- 6. memo QC --------------------------------------------------------
     qc, diffs = memo_qc_for(case_set)
-    (development_dir / "memo_qc.json").write_text(
+    (development_dir / f"memo_qc{stem}.json").write_text(
         json.dumps(qc.to_payload(), indent=2) + "\n", encoding="utf-8"
     )
     print(
@@ -152,7 +201,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  FLAG {flag}")
 
     # -- 7. review pack ----------------------------------------------------
-    markdown_path, json_path = write_review_pack(case_set, development_dir)
+    # The review pack is a directory rather than a filename: it writes a fixed
+    # ``case_review_pack.{md,json}`` pair, so a revision that is not the first
+    # gets its own subdirectory instead of a suffix.
+    pack_dir = development_dir if version == "1" else development_dir / f"v{version}"
+    markdown_path, json_path = write_review_pack(case_set, pack_dir)
     print(f"review pack: {markdown_path} ({len(render_review_pack(case_set))} chars)")
     print(f"             {json_path}")
     print("  every case is PENDING_HUMAN_REVIEW; no human review has been performed")

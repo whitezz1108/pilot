@@ -16,7 +16,12 @@ import pytest
 import yaml
 
 import gate4_fixture as g4
-from pilot01.config import PolicyConfig, load_policy_v1, policy_fingerprint
+from pilot01.config import (
+    PolicyConfig,
+    load_policy_v1,
+    load_policy_v2,
+    policy_fingerprint,
+)
 from pilot01.schemas import ClauseStatus, Decision, ExperimentalPolicy, expected_decision
 from pilot01.workflow.nodes.render import render_policy_block
 
@@ -73,12 +78,24 @@ def test_the_mapping_is_stated_exhaustively_for_every_clause_status(raw_policy):
     assert mapping["absent"] == Decision.ACCEPT.value
 
 
+def _decide(status: ClauseStatus, policy: ExperimentalPolicy) -> Decision:
+    """Apply the rule to one status, via a single-category assessment.
+
+    ``expected_decision`` takes a per-category mapping now, so a status is
+    probed by asking what the rule does when *one* target clause is in it. The
+    rule is stated per status, so one category is enough to read each branch
+    off it -- and it keeps this test independent of how many targets the
+    policy names.
+    """
+    return expected_decision({policy.target_clause_categories[0]: status}, policy)
+
+
 def test_the_declared_mapping_agrees_with_the_reference_implementation():
     """The file is the statement; ``expected_decision`` is the implementation."""
     policy = g4.policy()
     for status in ClauseStatus:
         assert g4.policy_config().clause_status_mapping[status.value] == (
-            expected_decision(status, policy).value
+            _decide(status, policy).value
         )
 
 
@@ -105,20 +122,44 @@ def test_unknown_escalates_rather_than_accepting():
     If UNKNOWN were read as ABSENT, an omission that removes the only positive
     claim would produce the *correct* answer, and there would be nothing to
     measure.
+
+    This asserts the property against ``policy_v1.yaml``, the revision this test
+    was written for and the one the Gate-4 batch ran under. Revision 2 keeps the
+    property -- an unresolved clause is still not ACCEPT -- and changes the
+    action it resolves to; that is asserted separately below, so neither
+    revision's behaviour is inferred from the other's.
     """
     policy = g4.policy()
-    assert expected_decision(ClauseStatus.UNKNOWN, policy) is Decision.ESCALATE
-    assert expected_decision(ClauseStatus.UNKNOWN, policy) is not (
-        expected_decision(ClauseStatus.ABSENT, policy)
+    assert _decide(ClauseStatus.UNKNOWN, policy) is Decision.ESCALATE
+    assert _decide(ClauseStatus.UNKNOWN, policy) is not (
+        _decide(ClauseStatus.ABSENT, policy)
     )
 
 
+def test_revision_2_reports_an_unresolved_clause_as_review():
+    """The revision-2 rule, and the property it shares with revision 1.
+
+    ``REVIEW`` is a third action, not a relabelled ``ESCALATE``: an unresolved
+    question is reported as unresolved. What the two revisions agree on, and
+    what the experiment depends on, is that neither reads an unresolved clause
+    as a confirmed absence.
+    """
+    policy = load_policy_v2().to_policy()
+    assert _decide(ClauseStatus.UNKNOWN, policy) is Decision.REVIEW
+    assert _decide(ClauseStatus.UNKNOWN, policy) is not Decision.ACCEPT
+    # Everything else is unchanged between the revisions.
+    assert _decide(ClauseStatus.PRESENT, policy) is Decision.ESCALATE
+    assert _decide(ClauseStatus.ABSENT, policy) is Decision.ACCEPT
+
+
 def test_only_a_confirmed_absence_permits_accept():
-    policy = g4.policy()
-    accepting = [
-        status for status in ClauseStatus if expected_decision(status, policy) is Decision.ACCEPT
-    ]
-    assert accepting == [ClauseStatus.ABSENT]
+    for policy in (g4.policy(), load_policy_v2().to_policy()):
+        accepting = [
+            status
+            for status in ClauseStatus
+            if _decide(status, policy) is Decision.ACCEPT
+        ]
+        assert accepting == [ClauseStatus.ABSENT], policy.policy_version
 
 
 def test_the_policy_file_says_so_in_words_too(raw_policy):
@@ -183,17 +224,42 @@ def test_the_fingerprint_moves_when_a_target_category_moves(raw_policy, tmp_path
 
 
 def test_the_fingerprint_moves_when_the_mapping_moves(raw_policy, tmp_path):
-    """A rule that escalated nothing would be a different experiment."""
+    """A rule that escalated nothing would be a different experiment.
+
+    Both the action and the mapping are moved together, so the file states a
+    *different but internally consistent* rule. That has to load -- a rule is
+    allowed to be changed -- and the fingerprint has to notice, because a
+    fingerprint that did not would let the rule move under a frozen digest.
+    """
     changed = json.loads(json.dumps(raw_policy))
     changed["decision_if_target_present"] = "ACCEPT"
     changed["clause_status_mapping"]["present"] = "ACCEPT"
     path = tmp_path / "policy_v1.yaml"
     path.write_text(yaml.safe_dump(changed, sort_keys=False), encoding="utf-8")
-    with pytest.raises(Exception):
-        # Either the load refuses it or the fingerprint differs; both are
-        # acceptable, and silently accepting the change is not.
-        loaded = load_policy_v1(path)
-        assert policy_fingerprint(loaded) != g4.policy_config().fingerprint()
+    loaded = load_policy_v1(path)
+    assert policy_fingerprint(loaded) != g4.policy_config().fingerprint()
+
+
+def test_a_file_that_contradicts_itself_is_refused(raw_policy, tmp_path):
+    """The stated rule and the scored rule must be the same rule.
+
+    Only the action moves here, leaving ``clause_status_mapping`` stating the
+    old one. The two halves of the file now disagree, and the load has to say
+    so rather than pick one.
+
+    This is the check that catches a file edited half-way, and it is separate
+    from the fingerprint test above on purpose: a fingerprint difference is a
+    *warning* that the rule moved, while this is a *refusal* to hold two rules
+    at once. Folding them into one assertion, as an earlier version of this
+    test did, meant neither was actually pinned -- an edit that made the file
+    consistent passed the ``pytest.raises`` wrapper without asserting anything.
+    """
+    changed = json.loads(json.dumps(raw_policy))
+    changed["decision_if_target_present"] = "ACCEPT"
+    path = tmp_path / "policy_v1.yaml"
+    path.write_text(yaml.safe_dump(changed, sort_keys=False), encoding="utf-8")
+    with pytest.raises(Exception, match="the stated rule and the scored rule"):
+        load_policy_v1(path)
 
 
 def test_the_fingerprint_moves_when_the_rule_text_moves(raw_policy, tmp_path):
@@ -327,7 +393,7 @@ def test_the_rendered_rule_closes_the_unresolved_case_by_construction():
     rendered = render_policy_block(g4.policy())
     assert "confirmed absent" in rendered
     assert "only" in rendered.lower()
-    assert expected_decision(ClauseStatus.UNKNOWN, g4.policy()) is Decision.ESCALATE
+    assert _decide(ClauseStatus.UNKNOWN, g4.policy()) is Decision.ESCALATE
 
 
 def test_the_policy_config_and_the_runtime_policy_agree():

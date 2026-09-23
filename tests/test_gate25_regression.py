@@ -254,7 +254,7 @@ class Identical:
             contract_text_hash=sample_case.CONTRACT_TEXT_HASH,
             target_category=sample_case.TARGET_CATEGORY,
             memo=self.repository[0].load(sample_case.CASE_ID, error_condition),
-            gold_status=ClauseStatus.PRESENT,
+            gold_target_clause_status={sample_case.TARGET_CATEGORY: ClauseStatus.PRESENT, sample_case.OTHER_CLAUSE_CATEGORY: ClauseStatus.ABSENT},
             policy=sample_case.build_policy(),
             omission=(
                 None if error_condition is ErrorCondition.E0 else self.repository[1]
@@ -318,10 +318,13 @@ def test_no_python_code_rewrites_an_answer_toward_the_gold_one():
     run.go()
     assert run.error is None
     assert run.state.manager_output is not None
-    assert run.state.manager_output.clause_status is ClauseStatus.ABSENT
+    assert (
+        run.state.manager_output.target_clause_status[sample_case.TARGET_CATEGORY]
+        is ClauseStatus.ABSENT
+    )
     assert run.state.manager_output.decision is Decision.ACCEPT
     # Gold says present/escalate. The run kept the model's answer anyway.
-    assert run.state.hidden.gold.gold_clause_status is ClauseStatus.PRESENT
+    assert run.state.hidden.gold.status_for(sample_case.TARGET_CATEGORY) is ClauseStatus.PRESENT
 
 
 def test_the_two_error_conditions_produce_the_same_node_sequence():
@@ -355,13 +358,13 @@ def live_requests(*, condition_id: str = "A1V1") -> tuple:
     )[0]
     conditions = load_conditions_v1()
     manager_client = ScriptedModelClient(
-        (search(), open_span(), sample_case.manager_response_text(
+        (search(), search("assignment"), open_span(), sample_case.manager_response_text(
             evidence_ids=(TARGET_PARAGRAPH,),
             verification_status=VerificationStatus.VERIFIED,
         ))
     )
     compliance_client = ScriptedModelClient(
-        (search(), open_span(), sample_case.compliance_response_text(
+        (search(), search("assignment"), open_span(), sample_case.compliance_response_text(
             evidence_ids=(TARGET_PARAGRAPH,),
             verification_status=VerificationStatus.VERIFIED,
         ))
@@ -387,7 +390,7 @@ def live_requests(*, condition_id: str = "A1V1") -> tuple:
         contract_text_hash=sample_case.CONTRACT_TEXT_HASH,
         target_category=sample_case.TARGET_CATEGORY,
         memo=repository.load(sample_case.CASE_ID, ErrorCondition.E0),
-        gold_status=ClauseStatus.PRESENT,
+        gold_target_clause_status={sample_case.TARGET_CATEGORY: ClauseStatus.PRESENT, sample_case.OTHER_CLAUSE_CATEGORY: ClauseStatus.ABSENT},
         policy=sample_case.build_policy(),
         gold_evidence_offsets=(987654321,),
     )
@@ -446,9 +449,9 @@ def test_compliance_still_does_not_receive_the_analyst_memo():
             # not a leak of the analyst's reading.)
             assert f"CLAIM {claim.claim_id}" not in text
             assert f"  status: {claim.status.value}" not in text
-            # The id may appear only inside the handoff's adopted-claim list.
+            # The id may appear only inside the handoff's claim list.
             if claim.claim_id in text:
-                assert "adopted_upstream_claim_ids:" in text
+                assert "upstream_claim_ids:" in text
 
 
 def test_the_source_tools_give_compliance_no_route_to_the_memo():

@@ -314,7 +314,18 @@ def build_case(
     contract_id: str = CONTRACT_ID,
     contract_text: str | None = None,
 ) -> CaseSpec:
-    """One case, with its gold span derived from the paragraph it is about."""
+    """One case, with its gold span derived from the paragraph it is about.
+
+    ``gold_clause_status`` is the pre-per-category spelling and states the status
+    of ``target_category``; the policy's *other* target category is ``absent``,
+    because no fixture memo carries a claim in it. That is what makes
+    ``target_category`` the case's only policy trigger, and therefore what makes
+    the E1 omission a manipulation of the decision rather than a no-op.
+
+    The other category is derived from ``target_category`` rather than fixed, so
+    that a case built about the second category (``CASE_B`` is about
+    ``assignment``) labels the first one absent instead of colliding with itself.
+    """
     text = contract_text
     if text is None:
         text = (
@@ -323,6 +334,11 @@ def build_case(
     offsets: tuple[int, ...] = ()
     if gold_paragraph_id is not None:
         offsets = gold_offsets_for_paragraph(document_for(contract_id), gold_paragraph_id)
+    other_category = next(
+        category
+        for category in sample_case.TARGET_CLAUSE_CATEGORIES
+        if category != target_category
+    )
     return CaseSpec(
         case_id=case_id,
         contract_id=contract_id,
@@ -330,7 +346,10 @@ def build_case(
         target_category=target_category,
         policy=sample_case.build_policy(),
         memo=memo,
-        gold_clause_status=gold_clause_status,
+        gold_target_clause_status={
+            target_category: gold_clause_status,
+            other_category: ClauseStatus.ABSENT,
+        },
         gold_evidence_offsets=offsets,
         is_negative_sentinel=gold_clause_status is ClauseStatus.ABSENT,
         error_conditions=error_conditions,
@@ -476,6 +495,7 @@ def scripted_responses(
     manager_evidence: tuple[str, ...] | None = None,
     compliance_evidence: tuple[str, ...] | None = None,
     query: str = "change of control",
+    target_categories: tuple[str, ...] = sample_case.TARGET_CLAUSE_CATEGORIES,
     reason_summary: str = "Declared by the experiment fixture; no inference is made.",
 ) -> dict[str, tuple[str, ...]]:
     """The raw responses for one run's two roles.
@@ -527,11 +547,18 @@ def scripted_responses(
         return {"manager": (manager_text,), "compliance": (compliance_text,)}
 
     def with_tools(text: str) -> tuple[str, ...]:
-        return (
-            sample_case.tool_request_text(SEARCH_CONTRACT, query=query),
-            sample_case.tool_request_text(OPEN_SOURCE_SPAN, paragraph_id=paragraph_id),
-            text,
-        )
+        searches = [sample_case.tool_request_text(SEARCH_CONTRACT, query=query)]
+        if verification_required:
+            for category in target_categories:
+                if category.replace("_", " ").casefold() not in query.casefold():
+                    searches.append(
+                        sample_case.tool_request_text(
+                            SEARCH_CONTRACT, query=category.replace("_", " ")
+                        )
+                    )
+        return (*searches,
+                sample_case.tool_request_text(OPEN_SOURCE_SPAN, paragraph_id=paragraph_id),
+                text)
 
     return {"manager": with_tools(manager_text), "compliance": with_tools(compliance_text)}
 
@@ -556,9 +583,9 @@ def default_responses(job: RunSpec, registry: CaseRegistry) -> dict[str, tuple[s
         source_access=source_access,
         verification_required=job.verification_required,
         paragraph_id=OPENABLE_PARAGRAPH[job.case_id],
-        manager_status=case.gold_clause_status,
+        manager_status=case.gold_status_for(case.target_category),
         manager_decision=case.gold_action,
-        compliance_status=case.gold_clause_status,
+        compliance_status=case.gold_status_for(case.target_category),
         compliance_decision=case.gold_action,
         manager_adopted=adopted,
         compliance_adopted=adopted,

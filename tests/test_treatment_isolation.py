@@ -362,10 +362,14 @@ def test_the_source_tools_section_is_the_same_for_both_roles():
         return re.sub(r"\s+", " ", text).strip()
 
     assert normalise(manager) == normalise(compliance)
-    # ...and the difference really is only that word.
+    # ...and the difference really is only that word. Each section names its
+    # own upstream artifact and never the other's, so the equality above is not
+    # the vacuous kind that holds because neither names anything.
     assert manager != compliance
-    assert "the memo used" in manager
-    assert "the handoff used" in compliance
+    assert re.search(r"\bthe memo\b", manager)
+    assert re.search(r"\bthe handoff\b", compliance)
+    assert not re.search(r"\bthe handoff\b", manager)
+    assert not re.search(r"\bthe memo\b", compliance)
 
 
 def test_the_source_tools_section_names_both_tools_and_the_envelope():

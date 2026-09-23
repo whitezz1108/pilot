@@ -96,7 +96,13 @@ def _record_block(record: DevelopmentCaseRecord) -> str:
         + ("NEGATIVE SENTINEL (both target clauses absent)" if record.is_negative_sentinel
            else f"POSITIVE OMISSION (exactly one target present: {record.target_category})")
     )
-    add(f"GOLD STATUS      {record.gold_clause_status.value}")
+    add(
+        "GOLD STATUS      "
+        + "; ".join(
+            f"{category}={status.value}"
+            for category, status in sorted(record.gold_target_clause_status.items())
+        )
+    )
     add(f"GOLD ACTION      {record.gold_action.value}   (POLICY-01, version {record.policy_version})")
     add(f"ERROR ARMS       {', '.join(record.error_conditions)}")
     add(f"REVIEW STATUS    {record.review_status}")

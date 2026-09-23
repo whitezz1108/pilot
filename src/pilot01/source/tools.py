@@ -612,7 +612,8 @@ def replay_ledger(
     given, which is right only for a log that holds one node's calls.
 
     ``upstream`` is the evidence the node was *handed* -- the memo's cited source
-    ids for the Manager, the handoff's ``evidence_ids`` for Compliance. It is an
+    ids for the Manager, the handoff's
+    ``evidence_provenance.inherited_source_ids`` for Compliance. It is an
     argument rather than something read from the log because it is not a tool
     event: no tool was called to obtain it. A caller replaying a whole run
     supplies it from the artifact the node was given, which is exactly where the

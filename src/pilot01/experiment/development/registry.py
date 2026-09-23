@@ -76,7 +76,7 @@ class DevelopmentCaseRecord(BaseModel):
     contract_text_hash: str
     target_category: str
     target_categories: tuple[str, ...]
-    gold_clause_status: ClauseStatus
+    gold_target_clause_status: dict[str, ClauseStatus]
     gold_evidence_offsets: tuple[int, ...]
     gold_evidence_texts: tuple[str, ...]
     gold_action: Decision
@@ -367,7 +367,7 @@ def build_development_set(
             target_category=case.target_category,
             policy=policy.to_policy(),
             memo=plan.memo,
-            gold_clause_status=case.gold_clause_status,
+            gold_target_clause_status=dict(case.gold_target_clause_status),
             gold_evidence_offsets=case.gold_evidence_offsets,
             is_negative_sentinel=case.is_negative_sentinel,
             error_conditions=error_conditions,
@@ -384,7 +384,7 @@ def build_development_set(
                 contract_text_hash=spec.contract_text_hash,
                 target_category=case.target_category,
                 target_categories=case.target_categories,
-                gold_clause_status=case.gold_clause_status,
+                gold_target_clause_status=dict(case.gold_target_clause_status),
                 gold_evidence_offsets=case.gold_evidence_offsets,
                 gold_evidence_texts=case.span_texts,
                 gold_action=spec.gold_action,

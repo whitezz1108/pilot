@@ -30,9 +30,11 @@ from pilot01.schemas import (
     ClauseStatus,
     ComplianceOutput,
     Decision,
+    EvidenceProvenance,
     ExperimentalPolicy,
     ManagerOutput,
     MemoClaim,
+    VerificationBasis,
     VerificationStatus,
     policy_01,
 )
@@ -46,6 +48,14 @@ TARGET_CLAUSE_CATEGORIES = ("change_of_control", "assignment")
 
 TARGET_CATEGORY = "change_of_control"
 """The category of the single claim the E1 arm deletes."""
+
+OTHER_CLAUSE_CATEGORY = "assignment"
+"""The fixture policy's second target category.
+
+The memo holds no claim in it, so its gold status is ``absent`` -- which is what
+makes ``change_of_control`` the only policy trigger this contract has, and what
+makes deleting that one claim the whole of the manipulation.
+"""
 
 TARGET_CLAIM_ID = "CL-1"
 TARGET_CLAIM_SOURCE_IDS = ("S-3.2", "S-3.3")
@@ -106,11 +116,84 @@ def build_e0_memo() -> AnalystMemo:
 # --------------------------------------------------------------------------
 
 
+_BASIS_FOR_STATUS = {
+    VerificationStatus.VERIFIED: VerificationBasis.SELF_CHECKED,
+    VerificationStatus.NOT_CHECKED: VerificationBasis.UPSTREAM_ONLY,
+    VerificationStatus.UNVERIFIABLE: VerificationBasis.UNAVAILABLE,
+}
+"""Translation for the ``verification_status`` keyword below.
+
+The schema moved from a single self-reported status to a self-reported *basis*
+recorded beside a runtime-derived status. This maps a test that names the old
+field onto the basis a model would have had to declare to produce it, so the
+translation is mechanical rather than a guess.
+"""
+
+
+def _statuses(clause_status: ClauseStatus) -> dict[str, ClauseStatus]:
+    """A per-category assessment from the old single-field value.
+
+    The removed field stated one contract-level status; the schema now requires
+    one per policy target category, so the old value has to be placed somewhere
+    and the other categories have to be given *something*. This fixture's second
+    target category (``assignment``) is one the memo has no claim in, so its
+    gold status is ``absent``, and the placement follows that: the named status
+    lands on the category the case is about, and every other target category is
+    reported ``absent``.
+
+    The alternative -- repeating the status across all of them -- was tried and
+    is wrong here, because it makes the fixture assert a clause is *present* in
+    a contract whose gold says it is absent. That is not a translation of the
+    old field, it is a claim the old field never made, and it turns every
+    scenario built on this helper into one where the node got a category wrong
+    for reasons the test never intended.
+
+    ``absent`` is not a free choice either: it is the only value consistent with
+    the case's own gold, and a test that wants a different one passes
+    ``target_clause_status=`` explicitly.
+    """
+    return {
+        category: (
+            clause_status if category == TARGET_CATEGORY else ClauseStatus.ABSENT
+        )
+        for category in TARGET_CLAUSE_CATEGORIES
+    }
+
+
+def _provenance(
+    *,
+    verification_status: VerificationStatus,
+    evidence_ids: tuple[str, ...],
+    adopted_upstream_claim_ids: tuple[str, ...],
+) -> EvidenceProvenance:
+    """The provenance block the old flat fields describe.
+
+    ``evidence_ids`` was one flat list, and the schema now splits it by *how the
+    node came to hold each id* -- opened itself, or inherited from the handoff.
+    The old field carried no such distinction, so the declared basis is what
+    decides which side the ids land on: a node declaring ``self_checked`` is
+    claiming it opened them, and a node declaring anything else is claiming it
+    did not. That is a translation of what the old field meant, not an added
+    distinction -- the tests that care about the split pass the real fields.
+    """
+    basis = _BASIS_FOR_STATUS[verification_status]
+    opened = evidence_ids if basis is VerificationBasis.SELF_CHECKED else ()
+    inherited = () if basis is VerificationBasis.SELF_CHECKED else evidence_ids
+    return EvidenceProvenance(
+        upstream_claim_ids=adopted_upstream_claim_ids,
+        inherited_source_ids=inherited,
+        opened_paragraph_ids=opened,
+        verification_basis=basis,
+    )
+
+
 def manager_output(
     *,
+    target_clause_status: dict[str, ClauseStatus] | None = None,
     clause_status: ClauseStatus = ClauseStatus.PRESENT,
     decision: Decision = Decision.ESCALATE,
     rule_id: str = "POLICY-01",
+    evidence_provenance: EvidenceProvenance | None = None,
     verification_status: VerificationStatus = VerificationStatus.NOT_CHECKED,
     evidence_ids: tuple[str, ...] = TARGET_CLAIM_SOURCE_IDS,
     adopted_upstream_claim_ids: tuple[str, ...] = (TARGET_CLAIM_ID,),
@@ -118,14 +201,32 @@ def manager_output(
     reason_summary: str = "Declared by the test fixture; the fake Manager infers nothing.",
     uncertainties: tuple[str, ...] = (),
 ) -> ManagerOutput:
-    """A scripted Manager handoff."""
+    """A scripted Manager handoff.
+
+    ``target_clause_status`` and ``evidence_provenance`` are the real fields and
+    take precedence when given. ``clause_status``, ``verification_status``,
+    ``evidence_ids`` and ``adopted_upstream_claim_ids`` are the pre-per-category
+    spellings, kept so a test that is not about the schema change reads the same
+    as it did; each is translated by the helpers above rather than silently
+    dropped.
+    """
     return ManagerOutput(
-        clause_status=clause_status,
+        target_clause_status=(
+            target_clause_status
+            if target_clause_status is not None
+            else _statuses(clause_status)
+        ),
         decision=decision,
         rule_id=rule_id,
-        verification_status=verification_status,
-        evidence_ids=evidence_ids,
-        adopted_upstream_claim_ids=adopted_upstream_claim_ids,
+        evidence_provenance=(
+            evidence_provenance
+            if evidence_provenance is not None
+            else _provenance(
+                verification_status=verification_status,
+                evidence_ids=evidence_ids,
+                adopted_upstream_claim_ids=adopted_upstream_claim_ids,
+            )
+        ),
         confidence=confidence,
         reason_summary=reason_summary,
         uncertainties=uncertainties,
@@ -134,9 +235,11 @@ def manager_output(
 
 def compliance_output(
     *,
+    target_clause_status: dict[str, ClauseStatus] | None = None,
     clause_status: ClauseStatus = ClauseStatus.PRESENT,
     decision: Decision = Decision.ESCALATE,
     rule_id: str = "POLICY-01",
+    evidence_provenance: EvidenceProvenance | None = None,
     verification_status: VerificationStatus = VerificationStatus.NOT_CHECKED,
     evidence_ids: tuple[str, ...] = TARGET_CLAIM_SOURCE_IDS,
     adopted_upstream_claim_ids: tuple[str, ...] = (TARGET_CLAIM_ID,),
@@ -144,14 +247,24 @@ def compliance_output(
     reason_summary: str = "Declared by the test fixture; the fake Compliance infers nothing.",
     uncertainties: tuple[str, ...] = (),
 ) -> ComplianceOutput:
-    """A scripted Compliance decision."""
+    """A scripted Compliance decision. See :func:`manager_output` for the fields."""
     return ComplianceOutput(
-        clause_status=clause_status,
+        target_clause_status=(
+            target_clause_status
+            if target_clause_status is not None
+            else _statuses(clause_status)
+        ),
         decision=decision,
         rule_id=rule_id,
-        verification_status=verification_status,
-        evidence_ids=evidence_ids,
-        adopted_upstream_claim_ids=adopted_upstream_claim_ids,
+        evidence_provenance=(
+            evidence_provenance
+            if evidence_provenance is not None
+            else _provenance(
+                verification_status=verification_status,
+                evidence_ids=evidence_ids,
+                adopted_upstream_claim_ids=adopted_upstream_claim_ids,
+            )
+        ),
         confidence=confidence,
         reason_summary=reason_summary,
         uncertainties=uncertainties,

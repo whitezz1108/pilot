@@ -26,7 +26,12 @@ import sample_case
 from pilot01.config import load_conditions_v1, load_workflow_v1
 from pilot01.events import EventType
 from pilot01.model import ModelCallLog, ScriptedModelClient
-from pilot01.schemas import ClauseStatus, ErrorCondition, VerificationStatus
+from pilot01.schemas import (
+    ClauseStatus,
+    ErrorCondition,
+    VerificationBasis,
+    VerificationStatus,
+)
 from pilot01.source import (
     EvidenceClass,
     SourceLibrary,
@@ -147,7 +152,10 @@ class Case:
             contract_text_hash=sample_case.CONTRACT_TEXT_HASH,
             target_category=sample_case.TARGET_CATEGORY,
             memo=self.repository.load(sample_case.CASE_ID, error_condition),
-            gold_status=gold_status,
+            gold_target_clause_status={
+                sample_case.TARGET_CATEGORY: gold_status,
+                sample_case.OTHER_CLAUSE_CATEGORY: ClauseStatus.ABSENT,
+            },
             policy=sample_case.build_policy(),
             gold_evidence_offsets=(987654321, 987654322),
             omission=None if error_condition is ErrorCondition.E0 else omission_record(),
@@ -196,9 +204,9 @@ def load_models():
 
 def a1v1(**kwargs) -> Case:
     """An A1V1 case in which both agents search, open, and answer with evidence."""
-    kwargs.setdefault("manager_responses", (search(), open_span(), verifying_answer()))
+    kwargs.setdefault("manager_responses", (search(), search("assignment"), open_span(), verifying_answer()))
     kwargs.setdefault(
-        "compliance_responses", (search(), open_span(), verifying_compliance_answer())
+        "compliance_responses", (search(), search("assignment"), open_span(), verifying_compliance_answer())
     )
     return Case(condition_id="A1V1", **kwargs)
 
@@ -494,8 +502,12 @@ def test_a1v1_completes_when_both_nodes_open_what_they_cite():
     state = case.run()
 
     assert state.status is RunStatus.COMPLETED
-    assert state.manager_output.evidence_ids == (TARGET_PARAGRAPH,)
-    assert state.compliance_output.evidence_ids == (TARGET_PARAGRAPH,)
+    assert state.manager_output.evidence_provenance.opened_paragraph_ids == (
+        TARGET_PARAGRAPH,
+    )
+    assert state.compliance_output.evidence_provenance.opened_paragraph_ids == (
+        TARGET_PARAGRAPH,
+    )
     for node in ("manager", "compliance"):
         verdict = case.verdicts(node)[0]
         assert verdict.required is True
@@ -510,10 +522,11 @@ def test_a1v1_logs_the_search_and_the_open_in_order():
     manager_records = case.tool_log.of_node("manager")
     assert [record.tool for record in manager_records] == [
         "search_contract",
+        "search_contract",
         "open_source_span",
     ]
-    assert [record.sequence for record in manager_records] == [0, 1]
-    assert manager_records[1].result_ids == (TARGET_PARAGRAPH,)
+    assert [record.sequence for record in manager_records] == [0, 1, 2]
+    assert manager_records[2].result_ids == (TARGET_PARAGRAPH,)
 
 
 def test_a1v1_does_not_accept_a_claim_of_verification_without_a_tool_call():
@@ -592,7 +605,15 @@ def test_a1v1_does_not_accept_an_id_from_another_contract():
     assert f"not_in_contract={foreign}" in verdict.diagnostics
 
 
-def test_a1v1_does_not_accept_a_status_that_is_not_verified():
+def test_a1v1_does_not_accept_a_basis_that_is_not_self_checked():
+    """The v2 spelling of "the node says it did not verify".
+
+    ``v1`` asked for a ``verification_status`` and failed a node that did not
+    say ``verified``. ``v2`` asks for the *basis* instead, and the same run --
+    one that opened the paragraph but declares it only relied on the handoff --
+    fails on the declaration. It also contradicts the ledger, which is reported
+    separately rather than folded into the same failure.
+    """
     case = Case(
         condition_id="A1V1",
         manager_responses=(
@@ -604,7 +625,12 @@ def test_a1v1_does_not_accept_a_status_that_is_not_verified():
     )
     state = case.run()
     assert state.status is RunStatus.FAILED
-    assert VerificationFailure.STATUS_NOT_VERIFIED in case.verdicts("manager")[0].failures
+    verdict = case.verdicts("manager")[0]
+    assert VerificationFailure.BASIS_NOT_SELF_CHECKED in verdict.failures
+    assert verdict.declared_basis is VerificationBasis.UPSTREAM_ONLY
+    assert verdict.derived_basis is VerificationBasis.SELF_CHECKED
+    assert not verdict.basis_agrees
+    assert VerificationFailure.CHECK_INCOMPLETE in verdict.failures
 
 
 def test_a1v1_does_not_accept_a_run_that_never_names_the_rule():
@@ -622,7 +648,7 @@ def test_a1v1_does_not_accept_a_citation_that_is_only_upstream():
     """Compliance may cite the handoff's ids, but that is not verification."""
     case = Case(
         condition_id="A1V1",
-        manager_responses=(search(), open_span(), verifying_answer()),
+        manager_responses=(search(), search("assignment"), open_span(), verifying_answer()),
         compliance_responses=(verifying_compliance_answer(),),
     )
     state = case.run()
@@ -649,7 +675,10 @@ def test_a1v1_fails_the_run_rather_than_filling_the_verification_fields():
     assert state.status is RunStatus.FAILED
     # The policy's own expected action is never consulted: the run ends with no
     # output rather than with the answer the experiment expects.
-    assert state.hidden.gold.gold_clause_status is ClauseStatus.PRESENT
+    assert (
+        state.hidden.gold.gold_target_clause_status[sample_case.TARGET_CATEGORY]
+        is ClauseStatus.PRESENT
+    )
 
 
 def test_a1v1_records_the_failure_as_a_protocol_error_on_the_node():
@@ -722,7 +751,8 @@ def test_a1v1_verdict_is_the_same_on_both_error_conditions():
     assert left.failures == right.failures
     assert left.checked == right.checked
     assert left.required == right.required
-    assert left.evidence_ids == right.evidence_ids
+    assert left.opened_paragraph_ids == right.opened_paragraph_ids
+    assert left.declared_basis is right.declared_basis
     assert left.status is right.status
 
 
@@ -770,13 +800,18 @@ def test_the_unverifiable_outcome_arises_from_the_evaluator_itself():
 
 
 def test_the_evaluator_reports_an_incomplete_record():
-    """Condition 6: the verification record's own required fields are complete.
+    """Condition 6: what the node says it did agrees with what it did.
 
-    Unreachable through the node, because the schema requires ``clause_status``
-    -- which is the point: the schema is the first line of that check and this
-    is the second.
+    The record is "incomplete" when the declared basis and the derived basis
+    disagree. That is the new shape of this check: it used to fire on a
+    ``clause_status`` field left unset, which the schema now forbids outright,
+    and the schema forbidding it is not the same as the node's account of its
+    own verification being true. What the check tests now is the agreement
+    between the two, which the schema cannot express at all.
     """
     ledger = EvidenceLedger(node="manager")
+    ledger.record_search("change of control", [TARGET_PARAGRAPH])
+    ledger.record_search("assignment", [])
     ledger.record_open(TARGET_PARAGRAPH)
     output = sample_case.manager_output(
         evidence_ids=(TARGET_PARAGRAPH,),
@@ -792,10 +827,39 @@ def test_the_evaluator_reports_an_incomplete_record():
         node="manager",
     )
     assert complete.failures == ()
+    assert complete.basis_agrees
 
-    without_clause_status = output.model_copy(update={"clause_status": None})
+    # Same output, but the ledger shows the node opened nothing: the declared
+    # ``self_checked`` has no tool call behind it, so the derived basis is
+    # ``upstream_only`` and the two disagree.
+    unbacked = sample_case.manager_output(
+        evidence_ids=(TARGET_PARAGRAPH,),
+        verification_status=VerificationStatus.VERIFIED,
+    )
     incomplete = evaluate_verification(
-        output=without_clause_status,
+        output=unbacked,
+        policy=sample_case.build_policy(),
+        ledger=EvidenceLedger(node="manager"),
+        document=sample_case.build_contract_document(),
+        verification_required=True,
+        source_tools_available=True,
+        node="manager",
+    )
+    assert VerificationFailure.CHECK_INCOMPLETE in incomplete.failures
+    assert not incomplete.basis_agrees
+    assert incomplete.declared_basis is VerificationBasis.SELF_CHECKED
+    assert incomplete.derived_basis is VerificationBasis.UPSTREAM_ONLY
+
+
+def test_v1_requires_a_search_for_each_policy_target():
+    ledger = EvidenceLedger(node="manager")
+    ledger.record_search("change of control", [TARGET_PARAGRAPH])
+    ledger.record_open(TARGET_PARAGRAPH)
+    outcome = evaluate_verification(
+        output=sample_case.manager_output(
+            evidence_ids=(TARGET_PARAGRAPH,),
+            verification_status=VerificationStatus.VERIFIED,
+        ),
         policy=sample_case.build_policy(),
         ledger=ledger,
         document=sample_case.build_contract_document(),
@@ -803,7 +867,28 @@ def test_the_evaluator_reports_an_incomplete_record():
         source_tools_available=True,
         node="manager",
     )
-    assert VerificationFailure.CHECK_INCOMPLETE in incomplete.failures
+    assert VerificationFailure.TARGET_NOT_SEARCHED in outcome.failures
+    assert "targets_not_searched=assignment" in outcome.diagnostics
+
+
+def test_v1_rejects_one_unopened_id_even_when_another_was_opened():
+    ledger = EvidenceLedger(node="manager")
+    ledger.record_search("change of control", [TARGET_PARAGRAPH])
+    ledger.record_search("assignment", [GOVERNING_LAW_PARAGRAPH])
+    ledger.record_open(TARGET_PARAGRAPH)
+    outcome = evaluate_verification(
+        output=sample_case.manager_output(
+            evidence_ids=(TARGET_PARAGRAPH, GOVERNING_LAW_PARAGRAPH),
+            verification_status=VerificationStatus.VERIFIED,
+        ),
+        policy=sample_case.build_policy(),
+        ledger=ledger,
+        document=sample_case.build_contract_document(),
+        verification_required=True,
+        source_tools_available=True,
+        node="manager",
+    )
+    assert VerificationFailure.EVIDENCE_NOT_OPENED in outcome.failures
 
 
 def test_the_evaluator_reports_no_evidence_cited():
@@ -830,14 +915,37 @@ def test_each_verification_failure_names_a_distinct_way_of_being_unbacked():
     assert values == {
         "rule_not_stated",
         "no_tool_use",
+        "target_not_searched",
         "no_evidence_cited",
         "evidence_not_opened",
         "evidence_not_in_contract",
         "evidence_not_observed",
-        "status_not_verified",
+        "basis_not_self_checked",
         "check_incomplete",
+        "status_not_verified",
         "source_tools_unavailable",
     }
+
+
+def test_the_v1_status_failure_is_retained_but_never_raised():
+    """``status_not_verified`` stays in the enum so v1 records still parse.
+
+    The development batch's stored outcomes name it, and an enum that had
+    dropped the member would make those files unreadable -- the same reason the
+    registry keeps its old files rather than rewriting them.
+    """
+    import inspect
+
+    from pilot01.source import verification as verification_module
+
+    source = inspect.getsource(verification_module)
+    raised = [
+        line
+        for line in source.splitlines()
+        if "VerificationFailure.STATUS_NOT_VERIFIED" in line
+        and not line.strip().startswith("#")
+    ]
+    assert raised == [], raised
 
 
 def test_the_verification_log_keeps_nodes_and_failures_apart():

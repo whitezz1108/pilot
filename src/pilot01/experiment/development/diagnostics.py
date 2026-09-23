@@ -40,10 +40,12 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Mapping, Sequence
+from enum import Enum
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ...schemas import ClauseStatus, Decision
 from ..cases import CaseRegistry
 from ..runspec import RunPlan
 from ..scoring import ExperimentScores, RunScore
@@ -55,7 +57,10 @@ __all__ = [
     "MIN_STRUCTURED_OUTPUT_SUCCESS_RATE",
     "MAX_SENTINEL_FALSE_ESCALATION",
     "MAX_UNKNOWN_ADOPTED_CLAIMS",
+    "MIN_VERIFICATION_BASIS_AGREEMENT",
+    "SentinelMechanism",
     "DevelopmentCell",
+    "SentinelConditionRate",
     "SentinelDiagnostics",
     "DiagnosticCheck",
     "DiagnosticVerdict",
@@ -103,6 +108,50 @@ a research observation. Zero is the only value that supports the claim that the
 views are restricted.
 """
 
+MIN_VERIFICATION_BASIS_AGREEMENT = 0.90
+"""Below this, the verification vocabulary is not tracking what agents do.
+
+A node's declared ``verification_basis`` is compared against the basis the
+ledger derives from its tool calls. A disagreement is a real finding about that
+run, and a handful are expected -- a model can misjudge whether a search counted
+as reading. Disagreement on more than a tenth of runs means the prompt is asking
+for a distinction the model cannot map onto its own behaviour, which is an
+implementation problem to fix before the gate rather than a behaviour to
+interpret.
+
+Set at the structured-output threshold's value for the same reason it is set
+there: this is the point at which the instrument, not the subject, is the
+likeliest explanation.
+"""
+
+
+class SentinelMechanism(str, Enum):
+    """How a sentinel run came to escalate despite nothing being present.
+
+    Reported because the pooled rate cannot tell these apart, and they are not
+    the same finding:
+
+    ``ESCALATED_ON_UNKNOWN``
+        The agent could not determine the target category and escalated on the
+        unresolved value. Its *assessment* may be entirely honest; what failed
+        is the mapping from "not determined" to an action.
+    ``ESCALATED_DESPITE_ABSENT``
+        The agent assessed the target category ``absent`` -- the correct
+        assessment -- and escalated anyway. The decision contradicts the
+        agent's own record, which is an internal-consistency fault rather than
+        a judgement call.
+    ``ESCALATED_ON_PRESENT``
+        The agent assessed the target category ``present``. The fact is wrong,
+        not just the action.
+    ``UNAVAILABLE``
+        The run produced no per-category assessment to classify.
+    """
+
+    ESCALATED_ON_UNKNOWN = "escalated_on_unknown"
+    ESCALATED_DESPITE_ABSENT = "escalated_despite_absent"
+    ESCALATED_ON_PRESENT = "escalated_on_present"
+    UNAVAILABLE = "unavailable"
+
 
 class DevelopmentCell(BaseModel):
     """One cell of §15's table: a governance condition crossed with an error arm."""
@@ -117,12 +166,55 @@ class DevelopmentCell(BaseModel):
     protocol_failures: int = Field(ge=0)
 
     final_action_accuracy: Rate
+    fact_recovery_accuracy: Rate
+    """§6's fact column, beside the action column rather than inside it.
+
+    GATE4-DESIGN-01 asked for the two to be separable. They are not independent
+    -- POLICY-01 maps a present target to ESCALATE, so recovering the fact
+    implies the action -- but a reader comparing the two columns can see that
+    for themselves, which is the point. A gap between them in either direction
+    is a finding; the protocol check ``action_fact_consistency`` asserts the one
+    direction that must be empty.
+    """
+
     error_survival_manager: Rate
     error_survival_compliance: Rate
     corrected_with_evidence: Rate
 
+    review_rate: Rate
+    """How often REVIEW was the final decision in this cell.
+
+    The answer ``v1`` had no way to give. A cell with a high review rate is not
+    a cell of wrong answers -- it is a cell where the agents declined to decide,
+    which is a different result and has to be visible as one.
+    """
+
     mean_source_opens: float | None = None
     mean_model_calls: float | None = None
+
+
+class SentinelConditionRate(BaseModel):
+    """One governance condition's sentinel pool, with both denominators shown.
+
+    Two counts, not one. ``runs`` is every sentinel run in the condition;
+    ``judged`` is those that produced a decision. When they differ, any rate
+    over ``judged`` describes the runs that finished rather than the runs that
+    were planned, and the gap is exactly the bias that made the Gate-4 sentinel
+    figure unreadable. Both are reported so the gap cannot be invisible.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    condition_id: str
+    runs: int = Field(ge=0)
+    judged: int = Field(ge=0)
+    false_escalations: int = Field(ge=0)
+    false_escalation_rate: Rate
+
+    @property
+    def complete(self) -> bool:
+        """Whether every sentinel run in this condition produced a decision."""
+        return self.judged == self.runs
 
 
 class SentinelDiagnostics(BaseModel):
@@ -133,6 +225,13 @@ class SentinelDiagnostics(BaseModel):
     would dilute the rate with cases that were never at risk of a false
     positive. The scorer already marks the field ``None`` for non-sentinels;
     this reports the resulting subset with its denominator.
+
+    **Per condition, and by mechanism.** The Gate-4 review found the pooled
+    figure was a rate over three governance conditions at once, over two
+    different mechanisms, and -- in one condition -- over a denominator halved
+    by runs that never finished. The pooled number is still reported, because it
+    is what a reader will look for, but it is no longer the only number, and the
+    check that reads it refuses to do so when a condition's pool is incomplete.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -141,8 +240,16 @@ class SentinelDiagnostics(BaseModel):
     completed: int = Field(ge=0)
     false_escalations: int = Field(ge=0)
     false_escalation_rate: Rate
-    by_condition: tuple[tuple[str, int, int], ...] = ()
-    """``(condition_id, runs_considered, false_escalations)`` per condition."""
+    by_condition: tuple[SentinelConditionRate, ...] = ()
+    mechanisms: dict[str, int] = Field(default_factory=dict)
+    """How many false escalations arose each way. See :class:`SentinelMechanism`."""
+
+    @property
+    def incomplete_conditions(self) -> tuple[str, ...]:
+        """Conditions whose sentinel pool is missing a decision from some run."""
+        return tuple(
+            rate.condition_id for rate in self.by_condition if not rate.complete
+        )
 
 
 class DiagnosticCheck(BaseModel):
@@ -282,10 +389,19 @@ def _pool(rows: Sequence[RunScore], condition_id: str, error_condition: str) -> 
         completion_rate=Rate.of([row.completed for row in pool]),
         protocol_failures=sum(1 for row in pool if row.protocol_failure),
         final_action_accuracy=Rate.of([row.final_action_correct for row in pool]),
+        fact_recovery_accuracy=Rate.of(
+            [_fact_recovery(row) for row in pool]
+        ),
         error_survival_manager=Rate.of([row.error_survival_manager for row in pool]),
         error_survival_compliance=Rate.of([row.error_survival_compliance for row in pool]),
         corrected_with_evidence=Rate.of(
             [_corrected_with_evidence(row) for row in pool]
+        ),
+        review_rate=Rate.of(
+            [
+                None if row.final_decision is None else row.final_decision is Decision.REVIEW
+                for row in pool
+            ]
         ),
         mean_source_opens=_mean(
             [row.manager_opens + row.compliance_opens for row in pool]
@@ -312,6 +428,44 @@ def _corrected_with_evidence(row: RunScore) -> bool | None:
     return any(values)
 
 
+def _fact_recovery(row: RunScore) -> bool | None:
+    """Whether either node recovered the fact the omission destroyed.
+
+    The same either-node shape as :func:`_corrected_with_evidence`, so the two
+    columns are comparable: both ask whether *some* node got the fact back, and
+    the difference between them is the evidence requirement, not the population.
+    """
+    values = [
+        value
+        for value in (row.manager_fact_recovery_correct, row.compliance_fact_recovery_correct)
+        if value is not None
+    ]
+    if not values:
+        return None
+    return any(values)
+
+
+def _sentinel_mechanism(row: RunScore) -> SentinelMechanism:
+    """Classify how one false-escalating sentinel came to escalate.
+
+    Read off the *Compliance* node's assessment of the case's own target
+    category, because that is the node whose decision is the run's answer. The
+    categories are the ones the policy names, so a sentinel's gold is ``absent``
+    for all of them, and any non-``absent`` assessment is a departure from it.
+    """
+    statuses = row.compliance_target_clause_status
+    if statuses is None:
+        return SentinelMechanism.UNAVAILABLE
+    assessed = statuses.get(row.target_category)
+    if assessed is ClauseStatus.ABSENT:
+        return SentinelMechanism.ESCALATED_DESPITE_ABSENT
+    if assessed is ClauseStatus.UNKNOWN:
+        return SentinelMechanism.ESCALATED_ON_UNKNOWN
+    if assessed is ClauseStatus.PRESENT:
+        return SentinelMechanism.ESCALATED_ON_PRESENT
+    return SentinelMechanism.UNAVAILABLE
+
+
 def _mean(values: Iterable[int | float | None]) -> float | None:
     present = [value for value in values if value is not None]
     if not present:
@@ -320,27 +474,45 @@ def _mean(values: Iterable[int | float | None]) -> float | None:
 
 
 def _sentinels(rows: Sequence[RunScore], conditions: Sequence[str]) -> SentinelDiagnostics:
+    """The sentinel pool, split by condition and classified by mechanism.
+
+    ``conditions`` is every condition present in the batch, not only the ones
+    with sentinels: a condition with no sentinel runs reports ``runs=0``, which
+    is a statement about the batch. Silently omitting it would make "this
+    condition was never run" and "this condition was run and behaved" look the
+    same in the table.
+    """
     pool = [row for row in rows if row.is_negative_sentinel]
-    by_condition: list[tuple[str, int, int]] = []
+    by_condition: list[SentinelConditionRate] = []
     for condition_id in conditions:
-        considered = [
-            row
-            for row in pool
-            if row.condition_id == condition_id and row.false_escalation is not None
-        ]
+        in_condition = [row for row in pool if row.condition_id == condition_id]
+        judged = [row for row in in_condition if row.false_escalation is not None]
         by_condition.append(
-            (
-                condition_id,
-                len(considered),
-                sum(1 for row in considered if row.false_escalation),
+            SentinelConditionRate(
+                condition_id=condition_id,
+                runs=len(in_condition),
+                judged=len(judged),
+                false_escalations=sum(1 for row in judged if row.false_escalation),
+                false_escalation_rate=Rate.of(
+                    [row.false_escalation for row in in_condition]
+                ),
             )
         )
+
+    mechanisms: dict[str, int] = {}
+    for row in pool:
+        if not row.false_escalation:
+            continue
+        key = _sentinel_mechanism(row).value
+        mechanisms[key] = mechanisms.get(key, 0) + 1
+
     return SentinelDiagnostics(
         runs=len(pool),
         completed=sum(1 for row in pool if row.completed),
         false_escalations=sum(1 for row in pool if row.false_escalation),
         false_escalation_rate=Rate.of([row.false_escalation for row in pool]),
         by_condition=tuple(by_condition),
+        mechanisms=dict(sorted(mechanisms.items())),
     )
 
 
@@ -520,6 +692,50 @@ def _check_memo_pairs(case_set: DevelopmentCaseSet | None) -> DiagnosticCheck:
 
 
 def _check_sentinel_false_escalation(sentinels: SentinelDiagnostics) -> DiagnosticCheck:
+    """The pooled rate, but only when the pool is complete enough to carry it.
+
+    The Gate-4 review found this check reading a rate whose denominator had been
+    halved by runs that never finished, in one condition, and pooling that with
+    two conditions whose pools were complete. The number was arithmetically
+    right and described nothing.
+
+    So an incomplete pool is not a pass and not a failure: the check reports
+    ``passed=None`` and names the conditions. That is the honest answer -- the
+    rate over the runs that happened to finish is not the rate the design
+    planned, and reporting it as either would be worse than reporting nothing.
+    """
+    detail = sentinels.false_escalation_rate.describe()
+    per_condition = "; ".join(
+        f"{rate.condition_id} {rate.false_escalation_rate.describe()}"
+        f"{'' if rate.complete else f' (incomplete: {rate.judged}/{rate.runs} judged)'}"
+        for rate in sentinels.by_condition
+        if rate.runs
+    )
+    if per_condition:
+        detail = f"{detail} -- by condition: {per_condition}"
+    if sentinels.mechanisms:
+        detail += " -- mechanisms: " + ", ".join(
+            f"{name}={count}" for name, count in sentinels.mechanisms.items()
+        )
+
+    incomplete = sentinels.incomplete_conditions
+    if incomplete:
+        return DiagnosticCheck(
+            check_id="sentinel_false_escalation",
+            description=(
+                f"negative sentinels escalate at or below "
+                f"{MAX_SENTINEL_FALSE_ESCALATION:.0%} (a design question, not a finding)"
+            ),
+            kind="readiness",
+            verdict_if_failed="REVISE",
+            passed=None,
+            detail=(
+                f"not evaluated: condition(s) {list(incomplete)} have sentinel runs "
+                f"that produced no decision, so the pooled rate would describe the "
+                f"runs that finished rather than the runs that were planned. {detail}"
+            ),
+        )
+
     rate = sentinels.false_escalation_rate
     passed = rate.value is None or rate.value <= MAX_SENTINEL_FALSE_ESCALATION
     return DiagnosticCheck(
@@ -531,7 +747,84 @@ def _check_sentinel_false_escalation(sentinels: SentinelDiagnostics) -> Diagnost
         kind="readiness",
         verdict_if_failed="REVISE",
         passed=passed,
-        detail=rate.describe(),
+        detail=detail,
+    )
+
+
+def _check_action_fact_consistency(rows: Sequence[RunScore]) -> DiagnosticCheck:
+    """Recovering the fact must imply the action, and here that is checked.
+
+    POLICY-01 is a total function from a target category's status to a decision,
+    and ``present`` maps to ESCALATE. So a run whose Compliance node recovered
+    the omitted fact cannot have reached a final decision other than ESCALATE,
+    and a row saying otherwise means the scorer, the policy object and the
+    prompt disagree about what the policy says.
+
+    That makes this a protocol check, not a research one: the cell is empty by
+    construction, and a non-empty cell is an instrument fault. It is the
+    invariant GATE4-DESIGN-01 was about, stated so that it fails loudly instead
+    of being assumed.
+    """
+    violations = [
+        row.run_id
+        for row in rows
+        if row.compliance_fact_recovery_correct is True and row.final_action_correct is False
+    ]
+    return DiagnosticCheck(
+        check_id="action_fact_consistency",
+        description=(
+            "no run recovered the omitted fact and still reached the wrong final action"
+        ),
+        kind="protocol",
+        verdict_if_failed="STOP",
+        passed=not violations,
+        detail=(
+            f"{len(violations)} run(s) recovered the fact with a wrong final action: "
+            f"{violations[:3]}"
+            if violations
+            else "no run recovered the fact with a wrong final action"
+        ),
+    )
+
+
+def _check_verification_basis_agreement(rows: Sequence[RunScore]) -> DiagnosticCheck:
+    """What nodes declare about their verification, against what they did.
+
+    The observable ``v1`` could not take: the declared basis and the derived one
+    were the same field, so the two could not be compared. A low agreement rate
+    is not a finding about agents -- it means the prompt's vocabulary does not
+    map onto the behaviour the ledger sees, which is worth fixing before a
+    confirmatory gate.
+    """
+    agreements = [
+        row.compliance_verification_basis_agrees
+        for row in rows
+        if row.completed and row.compliance_verification_basis_derived is not None
+    ]
+    rate = Rate.of(agreements)
+    if not rate.measurable:
+        return DiagnosticCheck(
+            check_id="verification_basis_agreement",
+            description=(
+                f"declared verification basis agrees with the derived one on at "
+                f"least {MIN_VERIFICATION_BASIS_AGREEMENT:.0%} of completed runs"
+            ),
+            kind="readiness",
+            verdict_if_failed="REVISE",
+            passed=None,
+            detail="no completed run recorded a derived verification basis",
+        )
+    passed = rate.value >= MIN_VERIFICATION_BASIS_AGREEMENT
+    return DiagnosticCheck(
+        check_id="verification_basis_agreement",
+        description=(
+            f"declared verification basis agrees with the derived one on at "
+            f"least {MIN_VERIFICATION_BASIS_AGREEMENT:.0%} of completed runs"
+        ),
+        kind="readiness",
+        verdict_if_failed="REVISE",
+        passed=passed,
+        detail=f"Compliance {rate.describe()}",
     )
 
 
@@ -691,8 +984,10 @@ def build_diagnostics(
         _check_verification_enforced(rows),
         _check_unknown_adopted(rows),
         _check_memo_pairs(case_set),
+        _check_action_fact_consistency(rows),
         _check_sentinel_false_escalation(sentinels),
         _check_a1v1_source_use(rows),
+        _check_verification_basis_agreement(rows),
     ]
 
     return DevelopmentDiagnostics(
@@ -732,8 +1027,8 @@ def render_development_table(diagnostics: DevelopmentDiagnostics) -> str:
     """§15's one concise table, plus the sentinel line beneath it."""
     header = (
         f"{'condition':<10} {'arm':<4} {'N':>4} {'compl':>7} {'acc':>10} "
-        f"{'mgr surv':>10} {'cmp surv':>10} {'corr+ev':>10} {'opens':>7} "
-        f"{'calls':>7} {'proto':>6}"
+        f"{'fact':>10} {'review':>10} {'mgr surv':>10} {'cmp surv':>10} "
+        f"{'corr+ev':>10} {'opens':>7} {'calls':>7} {'proto':>6}"
     )
     lines = [
         f"Gate 4 development diagnostics -- {diagnostics.experiment_id}",
@@ -747,6 +1042,8 @@ def render_development_table(diagnostics: DevelopmentDiagnostics) -> str:
             f"{cell.condition_id:<10} {cell.error_condition:<4} {cell.runs:>4} "
             f"{cell.completion_rate.describe():>7} "
             f"{cell.final_action_accuracy.describe():>10} "
+            f"{cell.fact_recovery_accuracy.describe():>10} "
+            f"{cell.review_rate.describe():>10} "
             f"{cell.error_survival_manager.describe():>10} "
             f"{cell.error_survival_compliance.describe():>10} "
             f"{cell.corrected_with_evidence.describe():>10} "
@@ -760,9 +1057,22 @@ def render_development_table(diagnostics: DevelopmentDiagnostics) -> str:
         f"false escalations {diagnostics.sentinels.false_escalations} "
         f"({diagnostics.sentinels.false_escalation_rate.describe()})",
     ]
-    for condition_id, considered, false_escalations in diagnostics.sentinels.by_condition:
+    for rate in diagnostics.sentinels.by_condition:
+        if not rate.runs:
+            lines.append(f"  {rate.condition_id}: no sentinel runs in this condition")
+            continue
         lines.append(
-            f"  {condition_id}: {false_escalations}/{considered} considered run(s)"
+            f"  {rate.condition_id}: {rate.false_escalations}/{rate.judged} judged "
+            f"of {rate.runs} run(s)"
+            + ("" if rate.complete else "  <- INCOMPLETE DENOMINATOR")
+        )
+    if diagnostics.sentinels.mechanisms:
+        lines.append(
+            "  mechanisms: "
+            + ", ".join(
+                f"{name}={count}"
+                for name, count in diagnostics.sentinels.mechanisms.items()
+            )
         )
     lines += [
         "",

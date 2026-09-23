@@ -78,11 +78,19 @@ def smoke_tree(tmp_path):
             source_access=job.source_access,
             verification_required=job.verification_required,
             paragraph_id=GOLD_PARAGRAPH,
-            manager_status=case.gold_clause_status,
+            manager_status=case.gold_status_for(case.target_category),
             manager_decision=case.gold_action,
-            compliance_status=case.gold_clause_status,
+            compliance_status=case.gold_status_for(case.target_category),
             compliance_decision=case.gold_action,
             query=case.target_category.replace("_", " ").lower(),
+            target_categories=case.policy.target_clause_categories,
+            manager_evidence=(
+                None if job.source_access else tuple(
+                    source_id
+                    for claim in registry.memo(job.case_id, job.error_condition).claims
+                    for source_id in claim.source_ids
+                )[:1]
+            ),
         )
         for job in plan.jobs
     }
@@ -110,7 +118,7 @@ def _run_all(paths, registry, models, tmp_path):
         checker._check_no_secrets(paths, runs, Path("nonexistent-registry.json")),
         checker._check_parsing(runs),
         checker._check_no_repair_storm(runs),
-        checker._check_a0_isolated(runs),
+        checker._check_a0_isolated(runs, registry),
         checker._check_a1_reached_source(runs),
         checker._check_a1v1_verified(runs),
         checker._check_scoring_reconstructs(paths, registry),
@@ -219,6 +227,47 @@ def test_a0_reaching_a_tool_fails_check_five(smoke_tree, tmp_path):
     )
     checks = _run_all(paths, registry, models, tmp_path)
     assert not checks[4].passed
+
+
+def test_missing_a0_provenance_is_partial_not_passed(smoke_tree):
+    paths, registry, _ = smoke_tree
+    a0 = next(p for p in paths.raw_dir.iterdir() if "A0V0" in p.name)
+    run_json = a0 / "run.json"
+    artifact = json.loads(run_json.read_text(encoding="utf-8"))
+    del artifact["execution"]["manager_output"]["evidence_provenance"]
+    run_json.write_text(json.dumps(artifact), encoding="utf-8")
+
+    check = checker._check_a0_isolated(checker._read_runs(paths), registry)
+    assert check.status == "PARTIAL"
+    assert not check.passed
+    assert check.as_dict()["incomplete"]
+
+
+def test_a0_cannot_claim_a_source_id_missing_from_its_memo(smoke_tree):
+    paths, registry, _ = smoke_tree
+    a0 = next(p for p in paths.raw_dir.iterdir() if "A0V0" in p.name)
+    run_json = a0 / "run.json"
+    artifact = json.loads(run_json.read_text(encoding="utf-8"))
+    artifact["execution"]["manager_output"]["evidence_provenance"][
+        "inherited_source_ids"
+    ] = ["fabricated-source-id"]
+    run_json.write_text(json.dumps(artifact), encoding="utf-8")
+
+    check = checker._check_a0_isolated(checker._read_runs(paths), registry)
+    assert check.status == "FAIL"
+    assert any("absent from its memo" in failure for failure in check.failures)
+
+
+def test_current_prompt_tree_error_is_not_called_a_version_mismatch(smoke_tree, monkeypatch):
+    paths, registry, _ = smoke_tree
+
+    def fail_scoring(*args, **kwargs):
+        raise ValueError("damaged score input")
+
+    monkeypatch.setattr(checker, "score_experiment", fail_scoring)
+    check = checker._check_scoring_reconstructs(paths, registry)
+    assert not check.passed
+    assert not any("predates the current prompt" in detail for detail in check.details)
 
 
 def test_an_a0_run_with_a_non_empty_tool_log_fails_check_nine(smoke_tree, tmp_path):

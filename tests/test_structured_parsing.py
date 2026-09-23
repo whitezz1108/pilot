@@ -111,7 +111,10 @@ def test_a_valid_response_becomes_a_domain_object():
     output = parse_structured(VALID, ManagerOutput, expected_role="manager")
     assert isinstance(output, ManagerOutput)
     assert output.decision is Decision.ESCALATE
-    assert output.clause_status is ClauseStatus.PRESENT
+    assert (
+        output.target_clause_status[sample_case.TARGET_CATEGORY]
+        is ClauseStatus.PRESENT
+    )
 
 
 def test_an_unknown_enum_value_is_rejected_not_coerced():
@@ -204,7 +207,9 @@ def test_the_repair_record_is_flagged_and_explains_itself():
     assert first.is_repair is False and first.attempt == 0
     assert second.is_repair is True and second.attempt == 1
     assert second.repair_reason == first.parse_error
-    assert second.prompt_version == "manager_v1+repair_v1"
+    # Derived rather than spelled out: the claim is that the repair call is
+    # tagged with the prompt it actually used, not that the prompt is v1.
+    assert second.prompt_version == f"{request().prompt_version}+{load_repair_prompt().ref}"
 
 
 def test_the_repair_reuses_the_original_parameters():

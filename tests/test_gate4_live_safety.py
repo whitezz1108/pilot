@@ -46,7 +46,18 @@ from gate4_smoke import build_smoke_plan  # noqa: E402
 PLAN_PATH = (
     REPO_ROOT / "outputs" / "manifests" / "gate4-development" / "run_plan.json"
 )
-REGISTRY_PATH = REPO_ROOT / "outputs" / "development" / "cases_v1.json"
+REGISTRY_PATH = REPO_ROOT / "outputs" / "development" / "cases_v1_v2.json"
+"""A registry the CLI can be pointed at, at the current prompt/policy revision.
+
+The Gate-4 plan is still the right plan -- the twelve cases and the sixty jobs
+are identical across the two revisions, and the plan carries no policy
+fingerprint, so it is byte-for-byte the same apart from ``experiment_id``. The
+registry is not: ``cases_v1.json`` was serialized before ``CaseSpec`` gained the
+per-category gold mapping and the policy's ``decision_if_target_unknown``, so
+the current loader refuses it. These tests are about the operator's path -- the
+three conditions, and what never reaches a file -- not about Gate 4's artifact
+contents, so they follow the registry to the revision that still loads.
+"""
 
 FAKE_KEY = "sk-" + "gate4-live-safety-test-value-not-a-real-credential"
 

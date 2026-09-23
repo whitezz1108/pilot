@@ -92,9 +92,11 @@ def render_policy_block(policy: ExperimentalPolicy) -> str:
         f"policy_id: {policy.policy_id}\n"
         f"policy_version: {policy.policy_version}\n"
         f"target_clause_categories: {categories}\n"
-        f"if a target clause is present: {policy.decision_if_target_present.value}\n"
-        f"if the target clauses are confirmed absent: "
+        f"if any target clause is present: {policy.decision_if_target_present.value}\n"
+        f"if every target clause is confirmed absent: "
         f"{policy.decision_if_target_absent.value}\n"
+        f"if a target clause cannot be determined: "
+        f"{policy.decision_if_target_unknown.value}\n"
         f"\n{policy.description}"
     )
 
@@ -130,12 +132,14 @@ def render_manager_handoff_block(handoff: ManagerOutput) -> str:
 
     Every field of the handoff is reproduced; nothing outside it is added.
     """
-    evidence = ", ".join(handoff.evidence_ids) if handoff.evidence_ids else "(none)"
-    adopted = (
-        ", ".join(handoff.adopted_upstream_claim_ids)
-        if handoff.adopted_upstream_claim_ids
-        else "(none)"
+    def listed(values: tuple[str, ...]) -> str:
+        return ", ".join(values) if values else "(none)"
+
+    statuses = "\n".join(
+        f"  {category}: {status.value}"
+        for category, status in handoff.target_clause_status.items()
     )
+    provenance = handoff.evidence_provenance
     uncertainties = (
         "\n".join(f"  - {item}" for item in handoff.uncertainties)
         if handoff.uncertainties
@@ -143,13 +147,16 @@ def render_manager_handoff_block(handoff: ManagerOutput) -> str:
     )
     return (
         "MANAGER HANDOFF\n"
-        f"clause_status: {handoff.clause_status.value}\n"
+        "target_clause_status:\n"
+        f"{statuses}\n"
         f"decision: {handoff.decision.value}\n"
         f"rule_id: {handoff.rule_id}\n"
-        f"verification_status: {handoff.verification_status.value}\n"
+        "evidence_provenance:\n"
+        f"  upstream_claim_ids: {listed(provenance.upstream_claim_ids)}\n"
+        f"  inherited_source_ids: {listed(provenance.inherited_source_ids)}\n"
+        f"  opened_paragraph_ids: {listed(provenance.opened_paragraph_ids)}\n"
+        f"  verification_basis: {provenance.verification_basis.value}\n"
         f"confidence: {handoff.confidence}\n"
-        f"evidence_ids: {evidence}\n"
-        f"adopted_upstream_claim_ids: {adopted}\n"
         f"reason_summary: {handoff.reason_summary}\n"
         "uncertainties:\n"
         f"{uncertainties}"

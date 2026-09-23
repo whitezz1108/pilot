@@ -39,7 +39,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from pilot01.config import load_models_v1  # noqa: E402
+from pilot01.config import load_models_v1, load_policy_v1  # noqa: E402
 from pilot01.experiment.cases import CaseRegistry  # noqa: E402
 from pilot01.experiment.development import build_gate4_development_set  # noqa: E402
 from pilot01.experiment.development.diagnostics import (  # noqa: E402
@@ -656,7 +656,7 @@ def render_markdown(context: dict) -> str:
 def build_context(*, root: Path, experiment_id: str) -> dict:
     paths = ExperimentPaths(root=root, experiment_id=experiment_id)
     registry = CaseRegistry.load_json(str(REGISTRY_PATH))
-    case_set = build_gate4_development_set().case_set
+    case_set = build_gate4_development_set(policy=load_policy_v1()).case_set
     plan = RunPlan.load_json(paths.run_plan_json)
 
     scores = score_experiment(paths.raw_dir, registry=registry)

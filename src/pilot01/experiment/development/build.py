@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping
 
-from ...config import PolicyConfig, load_policy_v1
+from ...config import PolicyConfig, load_policy_v2
 from ...source import ContractDocument, build_document
 from .cuad_annotations import CuadAnnotationSet, load_annotations
 from .memoqc import MemoPairDiff, MemoQCReport, build_memo_qc
@@ -72,9 +72,24 @@ def build_gate4_development_set(
     The seed is the selection seed and defaults to the declared one. It is a
     parameter so a test can prove that a different seed produces a different but
     equally valid set, not so that a run can quietly pick a more convenient one.
+
+    ``policy`` defaults to the *current* revision of POLICY-01, not to the one
+    the Gate-4 batch ran under. The case content is the same either way -- the
+    two revisions differ only in the action for an unresolved clause, and a gold
+    label is never unresolved -- so the twelve cases, their gold spans and their
+    selection fingerprint are identical. What differs is the rule object the
+    cases carry, and that object is what renders the POLICY block into every
+    prompt. A default that pinned revision 1 would therefore state revision 1's
+    rule in a prompt that a revision-2 run is scored against, which is the one
+    way this build could silently produce a run that cannot be scored.
+
+    A caller that needs the Gate-4 set as Gate 4 built it passes
+    ``policy=load_policy_v1()`` explicitly. That is what the Gate-4 audit
+    scripts do, so their frozen fingerprints keep checking the artifacts they
+    were frozen against.
     """
     annotations = annotations if annotations is not None else load_annotations()
-    policy = policy if policy is not None else load_policy_v1()
+    policy = policy if policy is not None else load_policy_v2()
     runtime_policy = policy.to_policy()
 
     documents: dict[str, ContractDocument] = {}
