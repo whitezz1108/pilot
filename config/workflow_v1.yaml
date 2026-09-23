@@ -1,0 +1,46 @@
+# Pilot v1 organizational workflow.
+#
+# Strictly sequential: analyst -> manager -> compliance -> end.
+#
+# The analyst node performs NO model call in v1. It only loads the already
+# frozen memo artifact selected by the (hidden) error condition.
+#
+# `edges` is the authoritative transition table: a node declares an *intent*
+# (a transition kind) and the runner resolves the destination from this table.
+# Nodes never choose their own successor.
+#
+# A future workflow version can enable the revision feedback loop
+#
+#     manager -> compliance
+#        ^            |
+#        +------------+   (transition kind: request_revision)
+#
+# by adding a `request_revision` edge under `compliance` and raising
+# max_revision_rounds above 0. No engine change is required. That route is
+# NOT active in v1: there is no `request_revision` edge anywhere, and
+# max_revision_rounds is 0, so the runner rejects such a transition.
+
+workflow_version: "1"
+
+start: analyst
+
+nodes:
+  - analyst
+  - manager
+  - compliance
+
+edges:
+  analyst:
+    default: manager
+  manager:
+    default: compliance
+  compliance:
+    default: end
+
+# v1 has no feedback loop. The runner raises a ProtocolError on any
+# request_revision transition while this is 0.
+max_revision_rounds: 0
+
+# Hard safety bound on node executions per run (protects against a future
+# misconfigured graph cycling forever). Must be >= the number of nodes.
+max_steps: 64

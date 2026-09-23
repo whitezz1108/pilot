@@ -1,0 +1,21 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+runs/
+
+# Immutable raw source material (CUAD checkout, archive, extracted annotations).
+# Only data/raw/ is ignored: data/manifest.md and future case/registry files under
+# data/ remain under version control.
+data/raw/
+
+# Raw model-call logs are local run artefacts, not tracked material.
+data/runs/
+
+# Experiment output: the frozen plan, the raw run tree, and everything derived
+# from it. Regenerable and potentially large, so it is not tracked. The inputs
+# it is generated from -- the case registry and the configs -- are.
+outputs/

@@ -1,0 +1,424 @@
+"""Gate 2: the versioned prompt files.
+
+Three things are checked here.
+
+1. **Loading and rendering.** A template declares its placeholders; rendering
+   supplies exactly those and no others; substitution is single-pass, so a value
+   that happens to contain ``{{...}}`` is emitted verbatim.
+2. **Coverage.** Each role prompt names every field of the output schema it is
+   asking for. A prompt that forgot ``uncertainties`` would make every response
+   fail validation, so the prompt and the schema are checked against each other.
+3. **What the prompts must not say.** The prompts are Gate-2 development
+   prompts, and they are held to the same silence as the restricted views: no
+   treatment labels, no hidden gold, no hypothesis, no hint about the expected
+   answer. A guard-style scan enforces that over the files themselves, and a
+   second scan enforces that no comparable prose has been embedded in ``src/``.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+
+import pilot01
+from pilot01.prompts import (
+    COMPLIANCE_PROMPT_ID,
+    MANAGER_PROMPT_ID,
+    PROMPTS_DIR_ENV,
+    REPAIR_PROMPT_ID,
+    PromptError,
+    PromptTemplate,
+    load_compliance_prompt,
+    load_manager_prompt,
+    load_prompt,
+    load_repair_prompt,
+    prompts_dir,
+)
+from pilot01.schemas import ComplianceOutput, ManagerOutput
+from pilot01.workflow.nodes.llm_agent import render_output_fields
+
+REPO_ROOT = Path(pilot01.__file__).resolve().parents[2]
+SRC_ROOT = Path(pilot01.__file__).resolve().parent
+
+FORBIDDEN_PROMPT_TEXT: tuple[str, ...] = (
+    "gold",
+    "hidden",
+    "omission",
+    "omitted",
+    "hypothesis",
+    "expected result",
+    "expected answer",
+    "supposed to fail",
+    "correct answer",
+    "ground truth",
+    "error condition",
+    "treatment",
+    "condition_id",
+)
+"""Substrings no experimental prompt may contain, matched case-insensitively."""
+
+FORBIDDEN_PROMPT_TOKENS: tuple[str, ...] = ("e0", "e1")
+"""Matched as whole tokens, so words that merely contain them are not flagged."""
+
+
+@pytest.fixture(scope="module")
+def manager_prompt() -> PromptTemplate:
+    return load_manager_prompt()
+
+
+@pytest.fixture(scope="module")
+def compliance_prompt() -> PromptTemplate:
+    return load_compliance_prompt()
+
+
+@pytest.fixture(scope="module")
+def repair_prompt() -> PromptTemplate:
+    return load_repair_prompt()
+
+
+# --------------------------------------------------------------------------
+# Loading
+# --------------------------------------------------------------------------
+
+
+def test_the_prompts_directory_resolves_inside_the_repository():
+    assert prompts_dir() == REPO_ROOT / "prompts"
+
+
+def test_the_prompts_directory_honours_its_environment_override(monkeypatch, tmp_path):
+    monkeypatch.setenv(PROMPTS_DIR_ENV, str(tmp_path))
+    assert prompts_dir() == tmp_path
+
+
+def test_a_missing_prompts_directory_fails_loudly(monkeypatch, tmp_path):
+    monkeypatch.setenv(PROMPTS_DIR_ENV, str(tmp_path / "nowhere"))
+    with pytest.raises(FileNotFoundError):
+        prompts_dir()
+
+
+def test_all_three_prompt_files_exist_and_are_version_controlled():
+    for name in ("manager_v1.md", "compliance_v1.md", "repair_v1.md"):
+        assert (REPO_ROOT / "prompts" / name).is_file(), name
+
+
+def test_a_missing_prompt_file_fails_loudly(tmp_path):
+    with pytest.raises(PromptError, match="not found"):
+        load_prompt("manager", "v99", directory=tmp_path)
+
+
+def test_prompt_version_identifiers(manager_prompt, compliance_prompt, repair_prompt):
+    assert manager_prompt.ref == "manager_v1"
+    assert compliance_prompt.ref == "compliance_v1"
+    assert repair_prompt.ref == "repair_v1"
+    assert MANAGER_PROMPT_ID == "manager"
+    assert COMPLIANCE_PROMPT_ID == "compliance"
+    assert REPAIR_PROMPT_ID == "repair"
+
+
+def test_the_declared_placeholders_are_exactly_what_the_prompts_use(
+    manager_prompt, compliance_prompt, repair_prompt
+):
+    assert manager_prompt.placeholders == ("policy",)
+    assert compliance_prompt.placeholders == ("policy",)
+    assert repair_prompt.placeholders == (
+        "output_fields",
+        "parse_error",
+        "previous_response",
+    )
+
+
+# --------------------------------------------------------------------------
+# Rendering
+# --------------------------------------------------------------------------
+
+
+def test_rendering_substitutes_the_declared_placeholder(manager_prompt):
+    rendered = manager_prompt.render(policy="POLICY BLOCK")
+    assert "POLICY BLOCK" in rendered
+    assert "{{policy}}" not in rendered
+
+
+def test_rendering_refuses_a_missing_placeholder(manager_prompt):
+    with pytest.raises(PromptError, match="not supplied"):
+        manager_prompt.render()
+
+
+def test_rendering_refuses_an_undeclared_value(manager_prompt):
+    with pytest.raises(PromptError, match="does not\\s+declare"):
+        manager_prompt.render(policy="x", gold_action="ACCEPT")
+
+
+def test_rendering_is_single_pass(repair_prompt):
+    """A value containing ``{{...}}`` is emitted verbatim, never re-rendered.
+
+    This matters: the repair turn injects the model's own previous response,
+    which may contain anything at all. Re-rendering it would let a model
+    manufacture a prompt substitution.
+    """
+    rendered = repair_prompt.render(
+        output_fields="{{previous_response}}",
+        parse_error="bad",
+        previous_response="the model wrote {{output_fields}} itself",
+    )
+    assert "the model wrote {{output_fields}} itself" in rendered
+    assert "{{previous_response}}" in rendered
+
+
+def test_rendering_does_not_mutate_the_template(manager_prompt):
+    before = manager_prompt.text
+    manager_prompt.render(policy="POLICY BLOCK")
+    assert manager_prompt.text == before
+
+
+# --------------------------------------------------------------------------
+# Coverage: the prompt asks for exactly the schema
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("prompt_fixture", "output_model"),
+    [("manager_prompt", ManagerOutput), ("compliance_prompt", ComplianceOutput)],
+)
+def test_each_role_prompt_names_every_required_output_field(
+    request, prompt_fixture, output_model
+):
+    text = request.getfixturevalue(prompt_fixture).text
+    for name in output_model.model_fields:
+        if name == "role":
+            continue
+        assert f"`{name}`" in text, f"{output_model.__name__}.{name} is not in the prompt"
+
+
+@pytest.mark.parametrize(
+    ("prompt_fixture", "output_model"),
+    [("manager_prompt", ManagerOutput), ("compliance_prompt", ComplianceOutput)],
+)
+def test_each_role_prompt_enumerates_the_schema_enum_values(
+    request, prompt_fixture, output_model
+):
+    text = request.getfixturevalue(prompt_fixture).text
+    for name, field in output_model.model_fields.items():
+        members = getattr(field.annotation, "__members__", None)
+        if members is None:
+            continue
+        for member in members.values():
+            assert f'"{member.value}"' in text, f"{name}={member.value} missing from the prompt"
+
+
+def test_the_repair_prompt_describes_the_real_schema(manager_prompt):
+    """The repair prompt's field list is derived, not written by hand."""
+    rendered = load_repair_prompt().render(
+        output_fields=render_output_fields(ManagerOutput),
+        parse_error="e",
+        previous_response="r",
+    )
+    for name in ManagerOutput.model_fields:
+        if name == "role":
+            continue
+        assert f"`{name}`" in rendered
+    assert "`role`" not in rendered
+
+
+def test_the_derived_field_list_reads_the_schema(manager_prompt):
+    fields = render_output_fields(ManagerOutput)
+    assert "one of \"present\", \"absent\", \"unknown\"" in fields
+    assert "one of \"ESCALATE\", \"ACCEPT\"" in fields
+    assert "number between 0.0 and 1.0" in fields
+    assert "array of string" in fields
+
+
+# --------------------------------------------------------------------------
+# The prompt's field groups are the schema's defaults
+# --------------------------------------------------------------------------
+
+OUTPUT_SECTION_RE = re.compile(
+    r"^##\s+Required fields\s*$(?P<required>.*?)"
+    r"^##\s+Fields with a default\s*$(?P<defaulted>.*?)"
+    r"(?=^#\s|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+FIELD_ITEM_RE = re.compile(r"^\s*-\s+`([a-z_][a-z0-9_]*)`", re.MULTILINE)
+
+
+def declared_field_groups(text: str) -> tuple[set[str], set[str]]:
+    """Read the two ``# OUTPUT`` sub-headings as the groups they declare.
+
+    Parsing the prompt rather than restating it is the whole point: a hand-written
+    expectation would drift from the file the moment the file changed, which is
+    the drift this pair of headings exists to make impossible.
+    """
+    match = OUTPUT_SECTION_RE.search(text)
+    assert match, "the prompt has no '## Required fields' / '## Fields with a default' pair"
+    return (
+        set(FIELD_ITEM_RE.findall(match.group("required"))),
+        set(FIELD_ITEM_RE.findall(match.group("defaulted"))),
+    )
+
+
+@pytest.mark.parametrize(
+    ("prompt_fixture", "output_model"),
+    [("manager_prompt", ManagerOutput), ("compliance_prompt", ComplianceOutput)],
+)
+def test_the_prompt_field_groups_match_the_schema_defaults(
+    request, prompt_fixture, output_model
+):
+    """Prompt fields == accepted structured protocol fields.
+
+    A field the schema will reject for being absent must be listed as required;
+    a field the schema will supply a default for must be listed as defaulted. If
+    the prompt claimed a field was mandatory while the schema quietly defaulted
+    it, a response that left it out would be accepted anyway and the omission
+    would be invisible -- so the two are checked against each other, from the
+    schema, rather than trusted to agree.
+    """
+    text = request.getfixturevalue(prompt_fixture).text
+    declared_required, declared_defaulted = declared_field_groups(text)
+
+    schema_required = {
+        name
+        for name, field in output_model.model_fields.items()
+        if field.is_required() and name != "role"
+    }
+    schema_defaulted = {
+        name
+        for name, field in output_model.model_fields.items()
+        if not field.is_required() and name != "role"
+    }
+
+    assert declared_required == schema_required, output_model.__name__
+    assert declared_defaulted == schema_defaulted, output_model.__name__
+    # The two groups partition the schema: no field is in both, none is missing.
+    assert not (declared_required & declared_defaulted)
+    assert declared_required | declared_defaulted == set(output_model.model_fields) - {"role"}
+
+
+@pytest.mark.parametrize(
+    ("prompt_fixture", "output_model"),
+    [("manager_prompt", ManagerOutput), ("compliance_prompt", ComplianceOutput)],
+)
+def test_the_defaulted_group_states_a_default_for_every_field_it_lists(
+    request, prompt_fixture, output_model
+):
+    """Every defaulted field says what its default is, in the schema's own terms.
+
+    The prompt tells the model that leaving one of these out is not an error. It
+    has to say what happens instead, or "you may leave this out" becomes "invent
+    something" -- which is the failure mode the split exists to close.
+    """
+    text = request.getfixturevalue(prompt_fixture).text
+    _, declared_defaulted = declared_field_groups(text)
+    match = OUTPUT_SECTION_RE.search(text)
+    body = match.group("defaulted")
+    for name in declared_defaulted:
+        assert f"`{name}`" in body
+        assert re.search(rf"`{name}`.*?Defaults to", body, re.DOTALL), name
+
+
+@pytest.mark.parametrize(
+    "prompt_fixture", ["manager_prompt", "compliance_prompt"]
+)
+def test_the_role_field_is_not_advertised_as_a_model_supplied_field(request, prompt_fixture):
+    """``role`` is stamped by the runtime, not answered by the model."""
+    text = request.getfixturevalue(prompt_fixture).text
+    required, defaulted = declared_field_groups(text)
+    assert "role" not in required
+    assert "role" not in defaulted
+
+
+def test_the_consistency_check_would_notice_a_reordered_field():
+    """Guard the guard: the parser reads the headings, not the file as a blob."""
+    text = (
+        "# OUTPUT\n\n## Required fields\n\n- `a`: x\n\n"
+        "## Fields with a default\n\n- `b`: y. Defaults to `[]`.\n"
+    )
+    assert declared_field_groups(text) == ({"a"}, {"b"})
+    with pytest.raises(AssertionError, match="no '## Required fields'"):
+        declared_field_groups("# OUTPUT\n\n- `a`\n")
+
+
+# --------------------------------------------------------------------------
+# What the prompts must not say
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "prompt_fixture", ["manager_prompt", "compliance_prompt", "repair_prompt"]
+)
+def test_no_prompt_mentions_hidden_experimental_data(request, prompt_fixture):
+    text = request.getfixturevalue(prompt_fixture).text
+    lowered = text.lower()
+    for pattern in FORBIDDEN_PROMPT_TEXT:
+        assert pattern not in lowered, f"prompt mentions {pattern!r}"
+    tokens = set(re.findall(r"[a-z0-9]+", lowered))
+    for token in FORBIDDEN_PROMPT_TOKENS:
+        assert token not in tokens, f"prompt mentions the token {token!r}"
+
+
+@pytest.mark.parametrize(
+    "prompt_fixture", ["manager_prompt", "compliance_prompt", "repair_prompt"]
+)
+def test_no_prompt_tells_the_model_the_expected_answer(request, prompt_fixture):
+    text = request.getfixturevalue(prompt_fixture).text.lower()
+    for phrase in ("you should escalate", "you should accept", "the answer is"):
+        assert phrase not in text
+
+
+def test_the_manager_prompt_is_told_the_memo_is_unverified(manager_prompt):
+    lowered = manager_prompt.text.lower()
+    assert "assertions by the analyst, not verified facts" in lowered
+
+
+def test_the_compliance_prompt_is_told_it_does_not_receive_the_memo(compliance_prompt):
+    lowered = compliance_prompt.text.lower()
+    assert "do **not** receive the analyst memo" in lowered
+
+
+def test_the_repair_prompt_is_format_only(repair_prompt):
+    lowered = repair_prompt.text.lower()
+    assert "formatting correction only" in lowered
+    assert "do not reconsider" in lowered
+    assert "do not add, remove or replace any evidence" in lowered
+
+
+def test_no_prompt_offers_a_rule_for_an_incomplete_memo():
+    """The prompts must not answer the question the pilot exists to measure.
+
+    A fabrication guard ("do not invent what the memo does not give you") is
+    required and is not what this checks. What it forbids is a *substantive*
+    rule: any instruction that would tell the model what an incomplete memo
+    means, and so decide the outcome before the model has read anything.
+    """
+    for template in (load_manager_prompt(), load_compliance_prompt()):
+        lowered = template.text.lower()
+        for phrase in (
+            "if a claim is missing",
+            "if the claim is missing",
+            "if a target clause is missing",
+            "if the target clause is missing",
+            "treat a missing",
+            "treat the absence",
+            "assume absent",
+            "assume it is absent",
+            "consider absent",
+            "infer absent",
+            "counts as absent",
+            "means absent",
+            "missing claim means",
+        ):
+            assert phrase not in lowered, f"{template.ref} supplies a rule: {phrase!r}"
+
+
+def test_no_large_prompt_prose_is_embedded_in_src():
+    """Prompts belong in ``prompts/``, not in Python string literals."""
+    markers = (
+        "You are the Manager agent",
+        "You are the Compliance agent",
+        "Return exactly one JSON object",
+        "PERMITTED INPUTS",
+    )
+    for path in SRC_ROOT.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for marker in markers:
+            assert marker not in text, f"{path.relative_to(SRC_ROOT)} embeds prompt prose"

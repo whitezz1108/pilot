@@ -1,0 +1,910 @@
+
+
+<pasted_content id="99b8">
+You are continuing the CUAD multi-agent error-propagation pilot.
+
+Gate 1, Gate 1.5, Gate 2, and Gate 2.5 are complete.
+
+Verified current baseline:
+
+- fixed sequential workflow:
+  Source → frozen Analyst memo → Manager → Compliance → Final
+- Python state-machine runner
+- structured experimental state
+- Manager / Compliance information isolation
+- real ModelClient abstraction
+- deterministic ScriptedModelClient
+- structured JSON parsing
+- max one format-repair retry
+- raw model-call logging
+- deterministic CUAD source layer
+- contract-local BM25 retrieval
+- exactly two read-only tools:
+    search_contract()
+    open_source_span()
+- A0V0 / A1V0 / A1V1 are behaviorally real
+- node-specific evidence ledgers
+- source access and verification are enforced by runtime
+- A1V1 cannot claim verification without actual source access
+- Compliance does not inherit Manager tool access
+- 571 tests currently pass
+- default test suite is fully offline
+- no database / LangGraph / vector DB / UI
+
+Gate 2.5 final report explicitly left the following unimplemented:
+- gold-based scoring
+- error_survival_manager
+- error_survival_compliance
+- corrected_with_evidence
+- false_escalation
+- experiment batch runner
+- repeated-run execution
+- randomization
+- development-case execution
+- pilot execution
+- statistical analysis
+
+Your task is GATE 3 ONLY.
+
+============================================================
+GATE 3 — EXPERIMENT EXECUTION + AUTOMATIC SCORING
+============================================================
+
+Goal:
+
+Turn the existing single-case workflow into a reproducible experimental engine
+that can:
+
+1. execute many case × condition × repeat jobs,
+2. assign stable run identities,
+3. randomize/interleave execution order reproducibly,
+4. preserve all raw execution artifacts,
+5. automatically derive experiment outcomes from raw state/logs,
+6. export one tidy row per run,
+7. reconstruct all processed results from raw artifacts.
+
+DO NOT build the real 12 development cases yet.
+DO NOT run the 40-case pilot.
+DO NOT do bootstrap / regressions / plots yet.
+
+Those belong to later gates.
+
+Gate 3 is infrastructure + scoring, tested primarily with synthetic / existing
+fixture cases.
+
+------------------------------------------------------------
+0. PRE-FLIGHT
+------------------------------------------------------------
+
+Before modifying anything:
+
+1. run the entire current test suite;
+2. confirm the baseline is exactly green;
+3. inspect existing:
+   - ExperimentState
+   - ExecutionRecord
+   - ScoringRecord
+   - events
+   - workflow export
+   - source evidence ledger
+   - verification outcome
+   - config/conditions_v1.yaml
+   - config/workflow_v1.yaml
+   - frozen memo repository
+   - existing raw logging
+
+Do not create duplicate abstractions if suitable ones already exist.
+
+Preserve all Gate 1–2.5 behavior.
+
+------------------------------------------------------------
+1. DEFINE THE RUN UNIT
+------------------------------------------------------------
+
+The experiment's runtime unit must be:
+
+    case × condition × repeat
+
+Create or complete a stable RunSpec / ExperimentJob abstraction.
+
+It should identify at minimum:
+
+- case_id
+- contract_id
+- condition_id
+- error_condition
+- source_access
+- verification_required
+- repeat_index
+- model configuration / model role config reference
+- run_id
+
+Do NOT put hidden gold into model-facing runtime objects.
+
+Gold may exist in the experiment/scoring layer but must remain outside
+RestrictedView / prompt rendering / tools.
+
+`run_id` must be deterministic from the experimental identity or be generated
+from a reproducible manifest in a way that guarantees no collision.
+
+The same frozen experiment manifest must produce the same run ordering and
+identities.
+
+------------------------------------------------------------
+2. BUILD A REPRODUCIBLE EXPERIMENT MANIFEST
+------------------------------------------------------------
+
+Implement an explicit experiment manifest / run-plan representation.
+
+Input:
+
+- case registry
+- selected condition IDs
+- repeat count
+- random seed
+- model config version
+
+Output:
+
+one immutable ordered list of RunSpec jobs.
+
+Requirements:
+
+- all expected combinations appear exactly once per repeat;
+- no duplicate run_id;
+- no missing case×condition cells;
+- condition order is randomized/interleaved;
+- randomization is deterministic for the same seed;
+- a different seed changes ordering but NOT experimental membership;
+- conditions for the same case should not always be adjacent;
+- randomization must never modify treatment content.
+
+Support export to something like:
+
+    outputs/manifests/<experiment_id>/run_plan.csv
+
+or JSONL if more natural in the existing project.
+
+Do not rely on pandas if unnecessary.
+
+Use Python standard library where practical.
+
+------------------------------------------------------------
+3. IMPLEMENT THE BATCH RUNNER
+------------------------------------------------------------
+
+Create a batch execution layer ABOVE the existing single-run workflow.
+
+The current WorkflowRunner must remain the authority for one run.
+
+Do NOT rewrite the runner.
+
+Conceptually:
+
+ExperimentRunner
+    ↓
+RunSpec #1 → existing WorkflowRunner
+RunSpec #2 → existing WorkflowRunner
+RunSpec #3 → existing WorkflowRunner
+...
+
+The batch layer must:
+
+- instantiate a fresh ExperimentState per job;
+- use a fresh model context per node/run;
+- never reuse Manager or Compliance conversation history across runs;
+- preserve condition isolation;
+- invoke the existing workflow;
+- catch and classify run-level failures;
+- continue remaining jobs unless fail-fast is explicitly requested;
+- write raw artifacts incrementally so a crash does not destroy completed runs.
+
+Support:
+
+    --resume
+
+or equivalent programmatic behavior.
+
+Resume must:
+- skip already completed run_ids;
+- not silently overwrite completed raw runs;
+- rerun explicitly failed runs only when requested;
+- preserve previous artifacts.
+
+Do NOT add multiprocessing yet unless absolutely necessary.
+Serial execution is sufficient for Gate 3.
+
+------------------------------------------------------------
+4. RAW ARTIFACT LAYOUT
+------------------------------------------------------------
+
+Create a clear immutable run artifact structure.
+
+A reasonable shape is:
+
+outputs/
+  raw/
+    <experiment_id>/
+      <run_id>/
+        run.json
+        model_calls.jsonl
+        tool_calls.jsonl
+        verification.jsonl
+        events.jsonl
+
+  processed/
+    <experiment_id>/
+      run_scores.jsonl
+      run_scores.csv
+
+Exact names may differ if existing export abstractions already define a better
+layout.
+
+Requirements:
+
+- raw artifacts are append/write-once;
+- processed artifacts may always be regenerated from raw;
+- no summary metric may require the live Python object in memory;
+- do not overwrite an existing run silently;
+- every file identifies:
+    experiment_id
+    run_id
+    case_id
+    condition_id
+    schema/version where appropriate.
+
+------------------------------------------------------------
+5. IMPLEMENT GOLD-BASED AUTOMATIC SCORING
+------------------------------------------------------------
+
+Implement scoring as a pure post-processing layer.
+
+CRITICAL RULE:
+
+SCORING MUST NEVER AFFECT THE WORKFLOW.
+
+No scoring function may be imported into:
+- prompts
+- nodes
+- tools
+- tool loop
+- retrieval
+- workflow routing
+
+Gold is read only AFTER or OUTSIDE model execution.
+
+Use deterministic rule-based scoring.
+
+No LLM-as-judge for primary metrics.
+
+Implement at minimum:
+
+--------------------------------------------------
+5A. final_action_correct
+--------------------------------------------------
+
+Definition:
+
+    compliance final decision == case.gold_action
+
+Return:
+- True / False
+- None if the run never produced a final Compliance output
+
+Do not reinterpret or "fix" the model answer.
+
+--------------------------------------------------
+5B. error_survival_manager
+--------------------------------------------------
+
+This metric applies primarily to E1 omission cases.
+
+Interpretation:
+
+Did the omitted upstream target fact remain uncorrected at Manager?
+
+Use the frozen case gold target clause status.
+
+For an E1 case whose target clause is truly present:
+
+    Manager clause_status != present
+        → error survived Manager
+
+    Manager clause_status == present
+        → Manager corrected the omission
+
+Do NOT infer correction merely because Manager chose ESCALATE.
+
+Decision correctness and fact correction are different.
+
+Return an explicit not-applicable value for cases where the metric is not
+conceptually defined.
+
+--------------------------------------------------
+5C. error_survival_compliance
+--------------------------------------------------
+
+Same principle at Compliance.
+
+For an E1 positive target case:
+
+    Compliance clause_status != present
+        → omission survived Compliance
+
+    Compliance clause_status == present
+        → omission corrected by Compliance
+
+Do not substitute final action for factual correction.
+
+--------------------------------------------------
+5D. correction_stage
+--------------------------------------------------
+
+For E1 target-positive cases classify:
+
+- manager
+- compliance
+- never
+
+Optionally:
+- already_correct / not_applicable for E0
+
+Definition must be deterministic from structured outputs.
+
+--------------------------------------------------
+5E. corrected_with_evidence
+--------------------------------------------------
+
+This is stricter than "correct clause_status".
+
+It is True only if all required components hold:
+
+1. target clause was correctly recovered;
+2. node cited evidence;
+3. cited evidence was SELF_OPENED by that node;
+4. evidence belongs to current contract;
+5. cited/opened evidence overlaps or corresponds to the frozen gold evidence
+   for the target clause.
+
+IMPORTANT:
+
+Use hidden gold offsets / source mapping ONLY in scoring.
+
+Never expose them to retrieval.
+
+If the current paragraphization means a gold span sits inside a paragraph,
+score evidence correctness by deterministic offset overlap between:
+
+    opened paragraph [start_char, end_char)
+and
+    gold evidence [gold_start, gold_end)
+
+Do NOT require exact string identity if paragraph-level evidence is the
+designed retrieval unit.
+
+Preserve enough diagnostics to explain why the metric is false:
+
+- target_not_recovered
+- no_evidence
+- not_self_opened
+- foreign_evidence
+- no_gold_overlap
+
+Use enums if appropriate.
+
+--------------------------------------------------
+5F. false_escalation
+--------------------------------------------------
+
+For negative sentinel cases where gold_action == ACCEPT:
+
+    final decision == ESCALATE
+        → false_escalation = True
+
+Otherwise False.
+
+Return not-applicable for positive cases if that makes the processed schema
+clearer.
+
+------------------------------------------------------------
+6. SEPARATE FACT, ACTION, AND EVIDENCE
+------------------------------------------------------------
+
+The scoring schema must NOT collapse these into a single "correct" field.
+
+At minimum preserve separate columns:
+
+- manager_clause_status_correct
+- compliance_clause_status_correct
+- final_action_correct
+- manager_corrected_with_evidence
+- compliance_corrected_with_evidence
+- false_escalation
+
+This distinction is scientifically important.
+
+Examples:
+
+Case A:
+Manager says UNKNOWN,
+Compliance says UNKNOWN,
+final_action = ESCALATE
+
+If ESCALATE happens to match gold:
+- final_action_correct = True
+- target fact was NOT recovered
+- corrected_with_evidence = False
+
+That run must NOT be described as successful correction.
+
+Case B:
+Manager correctly finds target clause with source evidence,
+Compliance inherits it but never independently opens source.
+
+Then:
+- Manager self-verification may be evidence-backed
+- Compliance may rely on upstream evidence
+- Compliance independent corrected_with_evidence must distinguish that from
+  self-opened verification
+
+Preserve Gate 2.5's:
+SELF_OPENED vs OBSERVED vs UPSTREAM_CITED distinction.
+
+------------------------------------------------------------
+7. FAILURE / PROTOCOL SCORING
+------------------------------------------------------------
+
+A failed run is data.
+
+Do not drop it from processed outputs.
+
+Every RunScore / ScoringRecord should include at least:
+
+- completed
+- run_status
+- failure_stage
+- failure_type
+- protocol_failure
+- model_output_failure
+- tool_failure if applicable
+- verification_failure if applicable
+
+If Manager fails:
+- Manager output dependent metrics may be None
+- Compliance metrics are None
+- final_action_correct is None
+
+If Compliance fails:
+- Manager metrics remain scoreable
+- Compliance/final metrics may be None
+
+Do not convert missing outputs into False unless False is scientifically the
+correct meaning.
+
+Distinguish:
+- incorrect
+from
+- unavailable due to protocol failure.
+
+------------------------------------------------------------
+8. COST / BURDEN METRICS
+------------------------------------------------------------
+
+Aggregate the logs into per-run cost/burden fields.
+
+At minimum:
+
+- manager_model_calls
+- compliance_model_calls
+- total_model_calls
+- repair_calls
+- search_calls
+- open_calls
+- total_tool_calls
+- manager_self_opened_count
+- compliance_self_opened_count
+- input_tokens if available
+- output_tokens if available
+- total_tokens if available
+- latency if available
+- estimated_cost_usd ONLY if the pricing data is explicitly configured
+
+Do NOT invent token counts.
+
+If a provider does not supply usage:
+    value = null / None
+
+Do not estimate cost from guessed pricing.
+
+If pricing is implemented, it must be versioned config, not hard-coded silently.
+
+------------------------------------------------------------
+9. BUILD ONE TIDY RUN-LEVEL OUTPUT SCHEMA
+------------------------------------------------------------
+
+Each completed/failed job should produce exactly one processed row.
+
+Suggested fields:
+
+IDENTITY
+- experiment_id
+- run_id
+- case_id
+- contract_id
+- condition_id
+- error_condition
+- source_access
+- verification_required
+- repeat_index
+
+GOLD / CASE CLASS
+- target_category
+- gold_clause_status
+- gold_action
+- is_negative_sentinel
+
+PROCESS OUTPUTS
+- manager_clause_status
+- manager_decision
+- manager_verification_status
+- compliance_clause_status
+- compliance_decision
+- compliance_verification_status
+
+PRIMARY / PROCESS METRICS
+- manager_clause_status_correct
+- compliance_clause_status_correct
+- error_survival_manager
+- error_survival_compliance
+- correction_stage
+- final_action_correct
+- manager_corrected_with_evidence
+- compliance_corrected_with_evidence
+- false_escalation
+
+EXECUTION
+- run_status
+- protocol_failure
+- failure_stage
+- failure_type
+
+BURDEN
+- model_calls
+- repair_calls
+- search_calls
+- open_calls
+- tool_calls
+- tokens
+- latency
+
+You may adapt names to existing schemas, but preserve the concepts.
+
+Processed records must be schema-versioned.
+
+------------------------------------------------------------
+10. REBUILD PROCESSED RESULTS FROM RAW
+------------------------------------------------------------
+
+Implement a pure command/function equivalent to:
+
+    score_experiment(raw_dir) -> processed records
+
+It must NOT call an LLM.
+
+It must NOT access the network.
+
+Given only:
+- frozen case registry / scoring keys
+- raw run artifacts
+
+it must recreate:
+- every RunScore
+- run_scores.jsonl
+- run_scores.csv
+
+Add a test proving:
+
+1. execute fixture batch;
+2. score it;
+3. delete processed output;
+4. regenerate processed output;
+5. byte-identical or semantic-identical result.
+
+This is a core acceptance criterion.
+
+------------------------------------------------------------
+11. IMPLEMENT EXPERIMENT-LEVEL QC SUMMARY
+------------------------------------------------------------
+
+Gate 3 may calculate basic QC counts, but NOT inferential statistics.
+
+Create something like ExperimentSummary with:
+
+- planned_runs
+- attempted_runs
+- completed_runs
+- failed_runs
+- protocol_failure_rate
+- structured_output_success_rate
+- verification_failure_count
+- tool_failure_count
+- missing_cells
+- duplicate_cells
+
+Also permit simple cell counts such as:
+
+    condition_id × error_condition → N
+
+Do NOT yet calculate:
+- bootstrap confidence intervals
+- regression coefficients
+- p-values
+- hypothesis tests
+- publication plots
+
+Those belong later.
+
+------------------------------------------------------------
+12. COMMAND-LINE / ENTRY POINT
+------------------------------------------------------------
+
+Provide a minimal, explicit CLI or script interface.
+
+Examples are conceptual:
+
+    python -m pilot01.experiment plan ...
+    python -m pilot01.experiment run ...
+    python -m pilot01.experiment score ...
+
+or:
+
+    scripts/build_run_plan.py
+    scripts/run_experiment.py
+    scripts/score_experiment.py
+
+Use whichever fits the repo.
+
+Important safety behavior:
+
+The default CLI must NOT accidentally spend money.
+
+Running real models must require explicit configuration.
+
+Support a deterministic scripted mode for tests/dev.
+
+If live execution requires an API key:
+- fail clearly if missing;
+- never print the key;
+- never silently fall back to another provider/model.
+
+------------------------------------------------------------
+13. TEST FIXTURES FOR SCORING
+------------------------------------------------------------
+
+Construct synthetic deterministic runs covering at least:
+
+A. E0 correct memo
+Manager correct → Compliance correct → correct action
+
+B. E1 omission survives both stages
+Manager misses → Compliance misses → wrong ACCEPT
+
+C. E1 corrected by Manager with self-opened gold-overlap evidence
+
+D. E1 missed by Manager but corrected by Compliance with self-opened evidence
+
+E. final action correct only because agent conservatively ESCALATEs while
+   clause_status remains unknown
+Expected:
+- final_action_correct = True
+- corrected_with_evidence = False
+
+F. Manager cites evidence only returned by search but never opened
+Expected:
+- not valid self-evidence
+
+G. Compliance adopts Manager-cited evidence but never opens it itself
+Expected:
+- upstream-cited, not independent verification
+
+H. negative sentinel correctly ACCEPTed
+
+I. negative sentinel falsely ESCALATEd
+
+J. Manager protocol failure
+
+K. Compliance protocol failure
+
+L. format-repair success
+
+M. format-repair exhausted / failure
+
+These should be deterministic and offline.
+
+------------------------------------------------------------
+14. TESTS REQUIRED
+------------------------------------------------------------
+
+Add comprehensive tests for:
+
+RUN PLAN
+- deterministic same-seed ordering
+- different seed changes order
+- same experimental membership across seeds
+- no missing combinations
+- no duplicate run ids
+- repeat indices correct
+- condition membership correct
+
+BATCH EXECUTION
+- each job creates a fresh state
+- contexts do not leak across runs
+- Manager/Compliance histories do not leak
+- failure in one run does not stop later runs by default
+- fail-fast works if explicitly requested
+- resume skips completed runs
+- resume does not overwrite raw artifacts
+
+SCORING
+- final_action_correct
+- manager error survival
+- compliance error survival
+- correction stage
+- evidence overlap
+- SELF_OPENED distinction
+- false escalation
+- E0 not-applicable handling
+- failure / None semantics
+
+RAW → PROCESSED
+- scoring never calls network
+- scoring never calls ModelClient
+- processed files regenerate from raw
+- no gold enters model-facing artifacts
+
+COST
+- call counts correct
+- repair counts correct
+- tool counts correct
+- missing token usage remains null
+
+REGRESSION
+- all 571 pre-Gate-3 tests still pass
+
+------------------------------------------------------------
+15. GOLD LEAKAGE TESTS
+------------------------------------------------------------
+
+Add explicit tests proving:
+
+- scoring modules may read gold
+- nodes cannot import scoring modules
+- source tools cannot import scoring modules
+- prompt renderer cannot import scoring modules
+- raw model requests contain no:
+    gold_action
+    gold_clause_status
+    gold_evidence_offsets
+- treatment prompts still contain no E0/E1/A0/A1/V0/V1 labels
+- target evidence offsets enter only post-run scoring
+
+Consider an architectural test that inspects imports or module dependencies.
+
+Gold must flow:
+
+    case registry
+        ↓
+    scoring layer
+
+NOT:
+
+    case registry gold
+        ↓
+    agent / prompt / retrieval
+
+------------------------------------------------------------
+16. KEEP GATE 3 SMALL
+------------------------------------------------------------
+
+STRICTLY OUT OF SCOPE:
+
+- choosing/finalizing the 12 real development contracts
+- manually reviewing those contracts
+- generating/finalizing their frozen Analyst memos
+- running the 12 real development cases
+- 40-case pilot
+- 32 positive + 8 sentinel selection
+- confirmatory split
+- prompt freezing
+- model benchmarking
+- statistical bootstrap
+- regression
+- confidence intervals
+- plots
+- dashboard/UI
+- SQLite/Postgres
+- vector database
+- embeddings
+- LangGraph
+- Study 2 memory
+- human experiment
+- theory writing
+
+Do not expand scope.
+
+------------------------------------------------------------
+17. GATE 3 ACCEPTANCE CRITERIA
+------------------------------------------------------------
+
+Do not declare Gate 3 complete unless ALL are true:
+
+[ ] all 571 pre-existing tests still pass
+[ ] new Gate 3 tests pass
+[ ] case×condition×repeat can be planned deterministically
+[ ] run ordering is reproducibly randomized
+[ ] every run has a unique stable run_id
+[ ] batch runner uses existing single-run workflow
+[ ] runs use fresh node/model contexts
+[ ] one failed run does not corrupt other runs
+[ ] resume works without overwriting completed raw runs
+[ ] raw artifacts are sufficient to reconstruct processed output
+[ ] final_action_correct is implemented
+[ ] error_survival_manager is implemented
+[ ] error_survival_compliance is implemented
+[ ] correction_stage is implemented
+[ ] corrected_with_evidence is implemented
+[ ] false_escalation is implemented
+[ ] fact correctness ≠ action correctness ≠ evidence correctness
+[ ] self-opened evidence ≠ upstream cited evidence
+[ ] failed runs remain in processed data
+[ ] cost/burden counters are produced
+[ ] missing token usage is never fabricated
+[ ] all primary scoring is deterministic / non-LLM
+[ ] scoring cannot influence workflow execution
+[ ] hidden gold never enters agent prompts/tools
+[ ] run_scores.jsonl and run_scores.csv can be regenerated from raw artifacts
+[ ] experiment QC can detect missing/duplicate cells
+[ ] default tests remain fully offline
+[ ] no real 12-case experiment was started
+[ ] no Gate 4 work was started
+
+------------------------------------------------------------
+18. FINAL REPORT
+------------------------------------------------------------
+
+When Gate 3 is complete, STOP.
+
+Return a Gate 3 Final Report with:
+
+1. final pytest result
+2. number of new tests / total tests
+3. files added / modified
+4. experiment manifest architecture
+5. run_id construction
+6. randomization algorithm and seed behavior
+7. batch runner architecture
+8. raw artifact layout
+9. resume semantics
+10. RunScore / ScoringRecord schema
+11. exact definitions of:
+    - final_action_correct
+    - error_survival_manager
+    - error_survival_compliance
+    - correction_stage
+    - corrected_with_evidence
+    - false_escalation
+12. evidence-offset overlap scoring rule
+13. failure / None semantics
+14. cost/burden aggregation
+15. raw → processed reconstruction proof
+16. gold leakage audit
+17. deterministic example runs A–M
+18. experiment QC summary example
+19. deliberately unimplemented Gate 4 items
+20. git diff --stat
+21. git status --short
+
+Do not commit.
+Do not push.
+Do not start Gate 4.
+</pasted_content id="99b8">

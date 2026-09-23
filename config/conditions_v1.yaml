@@ -1,0 +1,49 @@
+# Experimental governance conditions for Pilot v1.
+#
+# A governance condition is the pair (source_access, verification_required).
+# Exactly three main conditions are defined. A0V1 (no source access but
+# verification required) is deliberately NOT a main experimental condition:
+# it is a degenerate cell (an agent cannot verify without tools) and is
+# rejected by the loader (see src/pilot01/config.py).
+#
+# The error condition (E0 / E1) is orthogonal to these governance conditions
+# and is NOT configured here, because it is a hidden experimental treatment
+# that must never be visible to Manager or Compliance.
+
+conditions_version: "1"
+
+conditions:
+  A0V0:
+    source_access: false
+    verification_required: false
+    description: "Baseline: no source tools, no verification obligation."
+
+  A1V0:
+    source_access: true
+    verification_required: false
+    description: "Tools available but unused: isolates the effect of availability alone."
+
+  A1V1:
+    source_access: true
+    verification_required: true
+    description: "Full governance: tools available and verification mandated."
+
+# Conditions that are implemented and permitted to be run as main experimental
+# cells. Any condition id absent from this list may exist as a definition but
+# must not be run as a main cell.
+main_conditions:
+  - A0V0
+  - A1V0
+  - A1V1
+
+# Conditions explicitly excluded from the main design, with the reason, so the
+# exclusion is auditable rather than merely absent.
+excluded_conditions:
+  A0V1:
+    source_access: false
+    verification_required: true
+    reason: >-
+      Degenerate cell: verification is mandated but no source tools exist, so
+      the compliance role can never discharge its obligation. Excluded from the
+      main design to avoid confounding an impossible task with governance
+      strength.

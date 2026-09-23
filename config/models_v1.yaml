@@ -1,0 +1,89 @@
+# Model parameters per agent role.
+#
+# This file is the reproducibility record for the model side of the experiment:
+# every field below is written into the raw model-call log for each call, so a
+# run can be described exactly. Changing a value here changes the experiment.
+#
+# MODEL ID RESOLVED FOR GATE 4 (2026-09-01).
+# The placeholder `gpt-4o-mini` that stood here has been replaced by the model
+# the Gate-4 development runs actually use. It was not a chosen experimental
+# model -- it was a cheap OpenAI-compatible default that the wiring could be
+# exercised with -- and leaving it in place would have sent that string to the
+# configured endpoint, which does not serve it.
+#
+# What changed, and what did not:
+#   * `model_id` changed for both roles, from the placeholder to the model the
+#     credentialled endpoint serves.
+#   * nothing else changed. Provider, temperature, token budget, top_p and
+#     timeout are as they were; `models_version` is unchanged, because this is a
+#     development configuration and no confirmatory freeze has happened.
+#   * the id is recorded here rather than read from the environment, so it stays
+#     part of the reproducibility record and part of the plan's model
+#     fingerprint. `scripts/live_smoke.py` is the one exception: it reads
+#     PILOT01_MODEL_ID, because a smoke test's job is to prove the transport
+#     works and not to fix a model.
+#
+# THIS IS STILL A DEVELOPMENT CONFIGURATION. Gate 4 is a development gate: the
+# model choice here is not a confirmatory decision, no confirmatory prompt or
+# model freeze has occurred, and Gate 4's results are not confirmatory results.
+#
+# The base URL and API key are never stored here; they come from
+# PILOT01_BASE_URL and PILOT01_API_KEY in the environment.
+#
+# temperature 0.0 is deliberate: the design wants as little sampling variance as
+# the provider allows.
+#
+# TOKEN BUDGET AND TIMEOUT RAISED FOR GATE 4 (2026-09-01).
+#
+# The Gate-4 smoke found the budget too small, and found it in the right place.
+# Of six real cells, five completed and one -- E0 x A1V0 -- came back with
+# `finish_reason: "length"` and an empty string at exactly 1024 completion
+# tokens: the model was still reasoning when the budget ran out, and had emitted
+# no content at all. The cells that did complete used 465-846 completion tokens,
+# so 1024 was clearing the typical call and failing the unlucky one by a margin
+# of roughly one call in six.
+#
+# That failure rate is not survivable across sixty runs, and it is not a
+# property of the treatment: it would have fallen on whichever cell drew a long
+# reasoning trace, in either arm and either error condition, and it would have
+# been recorded as a model that could not produce the schema. It is an
+# infrastructure fault, and this is the infrastructure fix.
+#
+#   * `max_output_tokens` 1024 -> 4096 for both roles. The cap is a ceiling and
+#     not a spend: the model stops when it is finished, so a generous cap costs
+#     nothing on a normal call and is only reached on the call that would
+#     otherwise have been truncated. 4096 is ~5x the largest completed answer
+#     observed in the smoke, which leaves room for a reasoning trace several
+#     times longer than any seen.
+#   * `timeout_seconds` 60 -> 180 for both roles, because the endpoint generates
+#     at roughly 70 tokens/second measured in the smoke, so a call that actually
+#     used the new ceiling would take about a minute. The timeout is a ceiling
+#     for the same reason the budget is.
+#
+# Nothing else changed: the prompts, the schema, the conditions, the treatment
+# and the scoring are untouched, and the change applies identically to both
+# roles and every cell, so it cannot advantage one condition over another. It
+# does change `ModelParams.fingerprint()`, and therefore the plan's model
+# fingerprint -- correctly, because the plan describes how the runs are made.
+#
+# THIS IS STILL A DEVELOPMENT CONFIGURATION, and this is not a confirmatory
+# freeze.
+
+models_version: "1"
+
+roles:
+  manager:
+    provider: openai-compatible
+    model_id: DeepSeek-V4.1-Flash
+    temperature: 0.0
+    max_output_tokens: 4096
+    top_p: null
+    timeout_seconds: 180.0
+
+  compliance:
+    provider: openai-compatible
+    model_id: DeepSeek-V4.1-Flash
+    temperature: 0.0
+    max_output_tokens: 4096
+    top_p: null
+    timeout_seconds: 180.0

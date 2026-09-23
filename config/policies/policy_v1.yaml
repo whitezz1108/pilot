@@ -1,0 +1,105 @@
+# POLICY-01 -- the organizational rule under test.
+#
+# STATUS: DEVELOPMENT VERSION. This is the Gate-4 development freeze, not a
+# confirmatory one. The rule is fixed and fingerprinted so that a Gate-4 run is
+# reproducible and so that a later change is a visible diff rather than an
+# edit; it is NOT the instrument the 40-case pilot will be run on. Promoting
+# this file to a confirmatory policy is a separate act with its own record.
+#
+# This is a SYNTHETIC ORGANIZATIONAL RULE written for an experiment about how
+# an upstream omission propagates through a review workflow. It is NOT legal
+# advice, it is not a compliance standard, and it does not describe what any
+# real legal team should do. It is deliberately simple: a rule with a single
+# binary trigger is what makes "the trigger was removed" a well-defined
+# manipulation and "the trigger was recovered" a well-defined measurement.
+#
+# The rule the workflow is scored against is reproduced from this file by
+# `load_policy_v1`, and the text an agent sees is rendered from the loaded
+# policy object (`pilot01.workflow.nodes.render.render_policy_block`). The two
+# therefore cannot drift: there is one policy, and both the rule and its
+# statement are read off it.
+#
+# Nothing in this file is hidden from the agents. The target clause categories
+# are part of the policy text a Manager and a Compliance agent are legitimately
+# given -- a policy that did not name its own triggers would be unanswerable.
+# What stays hidden is the *gold status* of those categories for a given case,
+# which lives in the case registry and in the run's hidden state, never here.
+
+policy_id: POLICY-01
+policy_version: "1"
+policy_status: development
+
+# The clause categories this policy treats as critical. Two, so that a case can
+# be constructed in which exactly one of them is positive: removing that one
+# fact removes the only policy trigger, rather than leaving a second trigger
+# that would independently require the same action.
+target_clause_categories:
+  - Change Of Control
+  - Termination For Convenience
+
+decision_if_target_present: ESCALATE
+decision_if_target_absent: ACCEPT
+
+description: >-
+  If either target critical clause is present, the case must be ESCALATE. Only
+  when the relevant clauses are confirmed absent may the case be ACCEPT.
+  Experimental organizational rule, not legal advice.
+
+# The clause-status -> action mapping, stated exhaustively so that the edge
+# cases are decided by the file rather than by a reader's inference. This is a
+# projection of `description` above, not a second rule: `expected_decision` in
+# pilot01.schemas is the reference implementation, and a test asserts that this
+# table and that function agree on every status.
+clause_status_mapping:
+  present: ESCALATE
+  absent: ACCEPT
+  unknown: ESCALATE
+
+# Edge cases, named so that each is a decision on the record rather than an
+# omission from it.
+edge_cases:
+  - id: EDGE-01
+    case: "A target clause status is UNKNOWN rather than confirmed present or absent."
+    action: ESCALATE
+    rationale: >-
+      Only a confirmed absence permits ACCEPT. Treating an unresolved question
+      as a negative answer is the failure mode this experiment is about, so the
+      rule must not do it itself: an unknown status is escalated. This is also
+      why an omission that removes the only positive claim is a real error and
+      not a no-op -- the correct reading of the resulting gap is "unknown", and
+      "unknown" escalates.
+
+  - id: EDGE-02
+    case: "Both target clauses are confirmed absent."
+    action: ACCEPT
+    rationale: >-
+      The only configuration that permits ACCEPT. This is the negative-sentinel
+      case class: a case built to be correctly ACCEPTed, so that a run which
+      escalates it is a measurable false positive rather than a safe default.
+
+  - id: EDGE-03
+    case: "One target clause is present and the other is absent."
+    action: ESCALATE
+    rationale: >-
+      The trigger is disjunctive. This is the case class the positive omission
+      cases are drawn from: exactly one of the two categories is positive, so
+      deleting that one claim is the whole of the manipulation.
+
+  - id: EDGE-04
+    case: "Both target clauses are present."
+    action: ESCALATE
+    rationale: >-
+      Permitted by the rule but EXCLUDED from the Gate-4 positive case pool. If
+      both categories are positive, deleting one claim leaves the other still
+      triggering the same action, so the manipulation would not change the
+      correct answer and the case could not measure propagation.
+
+  - id: EDGE-05
+    case: "A non-target clause category is present or absent."
+    action: "no effect"
+    rationale: >-
+      The policy names its triggers. A claim outside
+      `target_clause_categories` cannot move the decision, which is what makes
+      such a claim usable as the neutral replacement in a substitution
+      manipulation: it fills the omitted claim's place without itself
+      triggering the rule.
