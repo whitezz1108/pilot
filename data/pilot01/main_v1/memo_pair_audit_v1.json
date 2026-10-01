@@ -1,0 +1,757 @@
+{
+  "protocol": "E0 is the frozen five-claim memo; E1 deletes exactly the target claim and its source ids",
+  "case_count": 40,
+  "positive_pairs": 32,
+  "sentinels_e0_only": 8,
+  "all_checks_passed": true,
+  "pairs": [
+    {
+      "case_id": "PILOT-POS-COC-0189",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-COC-0189-MEMO",
+      "omitted_claim_id": "C-CHANGE-OF-CONTROL",
+      "omitted_category": "Change Of Control",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-TERMINATION-FOR-CONVENIENCE",
+        "C-PARTIES",
+        "C-DOCUMENT-NAME",
+        "C-ROFR-ROFO-ROFN"
+      ],
+      "removed_source_ids": [
+        "670816cb31e3:p0016",
+        "670816cb31e3:p0020"
+      ],
+      "e0_sha256": "sha256:aa223622aef9640d6c61bde826e8d81bb2d846b5616e989029e20280541ceaa7",
+      "e1_sha256": "sha256:0508dd45ec2ae03882672cea4ccdd1e21cb8382d09fa4d8b8c746259f8712f2b"
+    },
+    {
+      "case_id": "PILOT-POS-COC-0437",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-COC-0437-MEMO",
+      "omitted_claim_id": "C-CHANGE-OF-CONTROL",
+      "omitted_category": "Change Of Control",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-TERMINATION-FOR-CONVENIENCE",
+        "C-LICENSE-GRANT",
+        "C-REVENUE-PROFIT-SHARING",
+        "C-EFFECTIVE-DATE"
+      ],
+      "removed_source_ids": [
+        "7e79ea54ff15:p0044"
+      ],
+      "e0_sha256": "sha256:3c735c2e1539b6243726ef27e481b3b4f25c43d09d034dc9cca2b34e9a949a16",
+      "e1_sha256": "sha256:82d9218dfa95905bc665af1832ef5f60d0aa10d612f504726ed4bf94bf660086"
+    },
+    {
+      "case_id": "PILOT-POS-COC-0190",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-COC-0190-MEMO",
+      "omitted_claim_id": "C-CHANGE-OF-CONTROL",
+      "omitted_category": "Change Of Control",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-TERMINATION-FOR-CONVENIENCE",
+        "C-PARTIES",
+        "C-EFFECTIVE-DATE",
+        "C-IP-OWNERSHIP-ASSIGNMENT"
+      ],
+      "removed_source_ids": [
+        "c24b749849b2:p0036"
+      ],
+      "e0_sha256": "sha256:afbed87d1f379232ac7af31b3883cb8487659ff9a426a31811f81e32f273bdb8",
+      "e1_sha256": "sha256:d793cb2ca8a9620520b1668e089dbacfcfe8909dd65ee3cfebd3110bfe66e439"
+    },
+    {
+      "case_id": "PILOT-POS-COC-0282",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-COC-0282-MEMO",
+      "omitted_claim_id": "C-CHANGE-OF-CONTROL",
+      "omitted_category": "Change Of Control",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-TERMINATION-FOR-CONVENIENCE",
+        "C-COVENANT-NOT-TO-SUE",
+        "C-NO-SOLICIT-OF-CUSTOMERS",
+        "C-IP-OWNERSHIP-ASSIGNMENT"
+      ],
+      "removed_source_ids": [
+        "549487e11028:p0020"
+      ],
+      "e0_sha256": "sha256:90d820c184a1df655b8ead2a262d8c997071496b14006ad108bc24b9bb5ddf68",
+      "e1_sha256": "sha256:c5521e8ee659f463495ddeb6063ac0f6ccd0a0cbe6901de029ec08654d546efd"
+    },
+    {
+      "case_id": "PILOT-POS-COC-0129",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-COC-0129-MEMO",
+      "omitted_claim_id": "C-CHANGE-OF-CONTROL",
+      "omitted_category": "Change Of Control",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-TERMINATION-FOR-CONVENIENCE",
+        "C-IP-OWNERSHIP-ASSIGNMENT",
+        "C-LICENSE-GRANT",
+        "C-NON-DISPARAGEMENT"
+      ],
+      "removed_source_ids": [
+        "e7af6c31ad15:p0086"
+      ],
+      "e0_sha256": "sha256:cf9ba55f7ce2c9eecf45730444e58961e372d29e0ce7bd40b7ef6c907ffa77ff",
+      "e1_sha256": "sha256:d31ea6645b64b4fc52ed0047659d140bf5501327129cfc296bd0d4caecb5c992"
+    },
+    {
+      "case_id": "PILOT-POS-COC-0432",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-COC-0432-MEMO",
+      "omitted_claim_id": "C-CHANGE-OF-CONTROL",
+      "omitted_category": "Change Of Control",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-TERMINATION-FOR-CONVENIENCE",
+        "C-VOLUME-RESTRICTION",
+        "C-MINIMUM-COMMITMENT",
+        "C-CAP-ON-LIABILITY"
+      ],
+      "removed_source_ids": [
+        "ed6d0e01ab25:p0050"
+      ],
+      "e0_sha256": "sha256:b7e6eb16078b9d9455b19a7bdf86bb26ab3c43cecebda9d3c84cf78259a64025",
+      "e1_sha256": "sha256:5606a97e94544d076648593cedfb95a401b0b9a92889edb9d027291af49fbbd2"
+    },
+    {
+      "case_id": "PILOT-POS-COC-0082",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-COC-0082-MEMO",
+      "omitted_claim_id": "C-CHANGE-OF-CONTROL",
+      "omitted_category": "Change Of Control",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-TERMINATION-FOR-CONVENIENCE",
+        "C-PARTIES",
+        "C-LICENSE-GRANT",
+        "C-GOVERNING-LAW"
+      ],
+      "removed_source_ids": [
+        "0ef1b1b1d8a0:p0046"
+      ],
+      "e0_sha256": "sha256:5ffb3522e18469e9de77bbfff30753b47894465787f3fd5d0333346b6705d652",
+      "e1_sha256": "sha256:db2ff727eabd67f1cc767e98db438831b8d0182affd91823af8e27c26cd47f19"
+    },
+    {
+      "case_id": "PILOT-POS-COC-0263",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-COC-0263-MEMO",
+      "omitted_claim_id": "C-CHANGE-OF-CONTROL",
+      "omitted_category": "Change Of Control",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-TERMINATION-FOR-CONVENIENCE",
+        "C-GOVERNING-LAW",
+        "C-DOCUMENT-NAME",
+        "C-CAP-ON-LIABILITY"
+      ],
+      "removed_source_ids": [
+        "97fe5dcb9450:p0001"
+      ],
+      "e0_sha256": "sha256:e73ec179fe313afedd53da943a9a33934da3b43be72cf64e8c7be20e4fc27608",
+      "e1_sha256": "sha256:3aca64807e0a818f02eebec3f563b4b831b9c1c1a240e52c3ea1f079fc7eee5b"
+    },
+    {
+      "case_id": "PILOT-POS-COC-0226",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-COC-0226-MEMO",
+      "omitted_claim_id": "C-CHANGE-OF-CONTROL",
+      "omitted_category": "Change Of Control",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-TERMINATION-FOR-CONVENIENCE",
+        "C-REVENUE-PROFIT-SHARING",
+        "C-EFFECTIVE-DATE",
+        "C-LIQUIDATED-DAMAGES"
+      ],
+      "removed_source_ids": [
+        "53a7275c87ec:p0043"
+      ],
+      "e0_sha256": "sha256:efb0a993a2df45834578887616b8789c334adcd2b38ac04f02629b978bf1953f",
+      "e1_sha256": "sha256:22955be99dc3a77d1d1f8b03854a19a2ad71727810712029a2825bca728818ab"
+    },
+    {
+      "case_id": "PILOT-POS-COC-0130",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-COC-0130-MEMO",
+      "omitted_claim_id": "C-CHANGE-OF-CONTROL",
+      "omitted_category": "Change Of Control",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-TERMINATION-FOR-CONVENIENCE",
+        "C-CAP-ON-LIABILITY",
+        "C-MINIMUM-COMMITMENT",
+        "C-DOCUMENT-NAME"
+      ],
+      "removed_source_ids": [
+        "07ea8cb47597:p0038"
+      ],
+      "e0_sha256": "sha256:32e18f699ddc2e19f1e355acf554d1f759f26719cfef0b7b2495cdcf65a9e231",
+      "e1_sha256": "sha256:4633aa68e34387775bd2d7ae222ae40e1027ea1f16ab1b46c74fb7d57373848e"
+    },
+    {
+      "case_id": "PILOT-POS-COC-0194",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-COC-0194-MEMO",
+      "omitted_claim_id": "C-CHANGE-OF-CONTROL",
+      "omitted_category": "Change Of Control",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-TERMINATION-FOR-CONVENIENCE",
+        "C-UNCAPPED-LIABILITY",
+        "C-ANTI-ASSIGNMENT",
+        "C-DOCUMENT-NAME"
+      ],
+      "removed_source_ids": [
+        "e584820f6e14:p0037"
+      ],
+      "e0_sha256": "sha256:2d329cc127d1ead782495e48b376e66f16e061407eb1b8fe0aa4af95bddb8333",
+      "e1_sha256": "sha256:c32b9c9f360ac60d5120db17fd06b81e6fc254b602c45278fd4d1aadec586c3f"
+    },
+    {
+      "case_id": "PILOT-POS-COC-0185",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-COC-0185-MEMO",
+      "omitted_claim_id": "C-CHANGE-OF-CONTROL",
+      "omitted_category": "Change Of Control",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-TERMINATION-FOR-CONVENIENCE",
+        "C-COMPETITIVE-RESTRICTION-EXCEPTION",
+        "C-JOINT-IP-OWNERSHIP",
+        "C-PARTIES"
+      ],
+      "removed_source_ids": [
+        "1c475f59db3b:p0068"
+      ],
+      "e0_sha256": "sha256:9e9ec81ec84170e34183ac2a27b23be11cbec1495a6c131ec65ec46f800d9153",
+      "e1_sha256": "sha256:2a500e12a2955ea51067a81d43c35d01ef0e0454aaf5e605ea55c9794bf4ac6d"
+    },
+    {
+      "case_id": "PILOT-POS-COC-0355",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-COC-0355-MEMO",
+      "omitted_claim_id": "C-CHANGE-OF-CONTROL",
+      "omitted_category": "Change Of Control",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-TERMINATION-FOR-CONVENIENCE",
+        "C-EXPIRATION-DATE",
+        "C-PARTIES",
+        "C-ANTI-ASSIGNMENT"
+      ],
+      "removed_source_ids": [
+        "0545fc6a00b6:p0057"
+      ],
+      "e0_sha256": "sha256:a751052de932539ea3f8795cfa55462c7cd7e6afaa8e4b9d4311de4f88cddad5",
+      "e1_sha256": "sha256:47e8385bfb4111674cd2d4a40ed6265ca5f20421958fbac0b312caebc2023af7"
+    },
+    {
+      "case_id": "PILOT-POS-COC-0053",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-COC-0053-MEMO",
+      "omitted_claim_id": "C-CHANGE-OF-CONTROL",
+      "omitted_category": "Change Of Control",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-TERMINATION-FOR-CONVENIENCE",
+        "C-THIRD-PARTY-BENEFICIARY",
+        "C-AUDIT-RIGHTS",
+        "C-GOVERNING-LAW"
+      ],
+      "removed_source_ids": [
+        "6ed1f77b684b:p0060",
+        "6ed1f77b684b:p0088"
+      ],
+      "e0_sha256": "sha256:31cce93ea5d9710179bfb95f464faab4ccb3f203f44c0187239f1efacc20a125",
+      "e1_sha256": "sha256:d12864a7ddbab2e0e3ea215f6a387fd1526caf4ffba9841a1e01412942ada18f"
+    },
+    {
+      "case_id": "PILOT-POS-COC-0318",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-COC-0318-MEMO",
+      "omitted_claim_id": "C-CHANGE-OF-CONTROL",
+      "omitted_category": "Change Of Control",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-TERMINATION-FOR-CONVENIENCE",
+        "C-NON-COMPETE",
+        "C-MINIMUM-COMMITMENT",
+        "C-EFFECTIVE-DATE"
+      ],
+      "removed_source_ids": [
+        "d4402382bb26:p0015"
+      ],
+      "e0_sha256": "sha256:a3652da16ef5f4511bb4ebefc9d734244e74581956b502d551f543e34145aa9c",
+      "e1_sha256": "sha256:e38dd51f9584a31308af111d30ac6a0e37bb8da2b5d3620190ba6a576af959bd"
+    },
+    {
+      "case_id": "PILOT-POS-COC-0387",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-COC-0387-MEMO",
+      "omitted_claim_id": "C-CHANGE-OF-CONTROL",
+      "omitted_category": "Change Of Control",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-TERMINATION-FOR-CONVENIENCE",
+        "C-NON-DISPARAGEMENT",
+        "C-PARTIES",
+        "C-GOVERNING-LAW"
+      ],
+      "removed_source_ids": [
+        "7aa6582007f2:p0016",
+        "7aa6582007f2:p0017"
+      ],
+      "e0_sha256": "sha256:c0f2a5130d4981a5f2def139b9599737213cfc9c5f9230e8365b2592eb3fd392",
+      "e1_sha256": "sha256:afb6489667f7662f88c85d70b6722c63b5ceb41420b329da184210081104efb9"
+    },
+    {
+      "case_id": "PILOT-POS-TFC-0307",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-TFC-0307-MEMO",
+      "omitted_claim_id": "C-TERMINATION-FOR-CONVENIENCE",
+      "omitted_category": "Termination For Convenience",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-CHANGE-OF-CONTROL",
+        "C-GOVERNING-LAW",
+        "C-ROFR-ROFO-ROFN",
+        "C-INSURANCE"
+      ],
+      "removed_source_ids": [
+        "0cf2b9b2c613:p0035"
+      ],
+      "e0_sha256": "sha256:3868b9efdcb2650ed84376e9e5718e32aa848884aba981c53d027b8f47a22342",
+      "e1_sha256": "sha256:f460b27925b256d36176ff47d8af4fa4aa276582cac75885f576f2b48d205814"
+    },
+    {
+      "case_id": "PILOT-POS-TFC-0061",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-TFC-0061-MEMO",
+      "omitted_claim_id": "C-TERMINATION-FOR-CONVENIENCE",
+      "omitted_category": "Termination For Convenience",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-CHANGE-OF-CONTROL",
+        "C-EXPIRATION-DATE",
+        "C-ROFR-ROFO-ROFN",
+        "C-REVENUE-PROFIT-SHARING"
+      ],
+      "removed_source_ids": [
+        "bd707d51c165:p0002",
+        "bd707d51c165:p0010"
+      ],
+      "e0_sha256": "sha256:b9a05cfe0d4e79b8c8d5ab27e92e4930472f2b7f578680cf0de57ce3bb95211b",
+      "e1_sha256": "sha256:0548fd27621f60345d77df2b1d9dadcc732eab04ffdd07d4ecba69c120ad8638"
+    },
+    {
+      "case_id": "PILOT-POS-TFC-0196",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-TFC-0196-MEMO",
+      "omitted_claim_id": "C-TERMINATION-FOR-CONVENIENCE",
+      "omitted_category": "Termination For Convenience",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-CHANGE-OF-CONTROL",
+        "C-EXPIRATION-DATE",
+        "C-ANTI-ASSIGNMENT",
+        "C-GOVERNING-LAW"
+      ],
+      "removed_source_ids": [
+        "66048676c514:p0008"
+      ],
+      "e0_sha256": "sha256:da0632c20fa639bc0258d99ed19a4d4b6643a45e5529b2d8d75b143e69aa1009",
+      "e1_sha256": "sha256:e0e7fd849272e9363567cfade2ccabd632731241f72659747d703d1a3c35b62b"
+    },
+    {
+      "case_id": "PILOT-POS-TFC-0389",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-TFC-0389-MEMO",
+      "omitted_claim_id": "C-TERMINATION-FOR-CONVENIENCE",
+      "omitted_category": "Termination For Convenience",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-CHANGE-OF-CONTROL",
+        "C-POST-TERMINATION-SERVICES",
+        "C-PARTIES",
+        "C-AUDIT-RIGHTS"
+      ],
+      "removed_source_ids": [
+        "f20f55c32b8c:p0037"
+      ],
+      "e0_sha256": "sha256:c974c44f527921355b2bb722ca2e4010df44b964d94a8fbff282a0daf6017485",
+      "e1_sha256": "sha256:21c460ea3054a56482e786dad3d3c6f007430b41c12681fed005740922d4fc3c"
+    },
+    {
+      "case_id": "PILOT-POS-TFC-0375",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-TFC-0375-MEMO",
+      "omitted_claim_id": "C-TERMINATION-FOR-CONVENIENCE",
+      "omitted_category": "Termination For Convenience",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-CHANGE-OF-CONTROL",
+        "C-ANTI-ASSIGNMENT",
+        "C-REVENUE-PROFIT-SHARING",
+        "C-NON-COMPETE"
+      ],
+      "removed_source_ids": [
+        "bc94244e3030:p0004"
+      ],
+      "e0_sha256": "sha256:2a6550ef356257ded70df1f952ec2043e1949ed9daf02fe9f6368cdb9932c895",
+      "e1_sha256": "sha256:f3d6e7f23064e8dd951c6258726cacff04d347ea69282b0d311f3a744a6b4a1b"
+    },
+    {
+      "case_id": "PILOT-POS-TFC-0097",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-TFC-0097-MEMO",
+      "omitted_claim_id": "C-TERMINATION-FOR-CONVENIENCE",
+      "omitted_category": "Termination For Convenience",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-CHANGE-OF-CONTROL",
+        "C-GOVERNING-LAW",
+        "C-NO-SOLICIT-OF-EMPLOYEES",
+        "C-PARTIES"
+      ],
+      "removed_source_ids": [
+        "ab268b758dc8:p0004"
+      ],
+      "e0_sha256": "sha256:b13b9ad6586353e98d91eaa263fbac12bd2ee38d2cfb58aa36c7e34c3afcb2df",
+      "e1_sha256": "sha256:0ac856929798db12dd546d2d3d2d8e33446022f3253d9cf2a33ae27d9f6c80c9"
+    },
+    {
+      "case_id": "PILOT-POS-TFC-0504",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-TFC-0504-MEMO",
+      "omitted_claim_id": "C-TERMINATION-FOR-CONVENIENCE",
+      "omitted_category": "Termination For Convenience",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-CHANGE-OF-CONTROL",
+        "C-CAP-ON-LIABILITY",
+        "C-REVENUE-PROFIT-SHARING",
+        "C-PARTIES"
+      ],
+      "removed_source_ids": [
+        "54c6d5857db6:p0102"
+      ],
+      "e0_sha256": "sha256:f3e2f0fac0637c9c7252d0f02f38fe5dc7576fc68c14fbb56c90e9b354dfbd0e",
+      "e1_sha256": "sha256:6abe7717117fcb8ba1d3edaec80b502c39434d4bbb3e1f86d9ae4ee1c3450295"
+    },
+    {
+      "case_id": "PILOT-POS-TFC-0331",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-TFC-0331-MEMO",
+      "omitted_claim_id": "C-TERMINATION-FOR-CONVENIENCE",
+      "omitted_category": "Termination For Convenience",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-CHANGE-OF-CONTROL",
+        "C-GOVERNING-LAW",
+        "C-RENEWAL-TERM",
+        "C-ANTI-ASSIGNMENT"
+      ],
+      "removed_source_ids": [
+        "357149c870e8:p0000"
+      ],
+      "e0_sha256": "sha256:cc4b2c05fa131024dcd903a9edd970ac196a6570eacb29cd7f0dc67bed4a95de",
+      "e1_sha256": "sha256:1220d1ba310a6c76d14ca3d6f2e25bcfacb652b66b380f61cbac117b2af358ce"
+    },
+    {
+      "case_id": "PILOT-POS-TFC-0329",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-TFC-0329-MEMO",
+      "omitted_claim_id": "C-TERMINATION-FOR-CONVENIENCE",
+      "omitted_category": "Termination For Convenience",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-CHANGE-OF-CONTROL",
+        "C-GOVERNING-LAW",
+        "C-CAP-ON-LIABILITY",
+        "C-ANTI-ASSIGNMENT"
+      ],
+      "removed_source_ids": [
+        "b91c8e29f300:p0091"
+      ],
+      "e0_sha256": "sha256:fd43340132a6909b03d7d6c0c4e6a434d1e47d97729d084da8e1036171221540",
+      "e1_sha256": "sha256:07cc1fc57c63dce38818d4bdbb42bf5b8e8e1955ae24fe6fbf4026fd4db07b2a"
+    },
+    {
+      "case_id": "PILOT-POS-TFC-0206",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-TFC-0206-MEMO",
+      "omitted_claim_id": "C-TERMINATION-FOR-CONVENIENCE",
+      "omitted_category": "Termination For Convenience",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-CHANGE-OF-CONTROL",
+        "C-EXCLUSIVITY",
+        "C-CAP-ON-LIABILITY",
+        "C-JOINT-IP-OWNERSHIP"
+      ],
+      "removed_source_ids": [
+        "da7570072540:p0002"
+      ],
+      "e0_sha256": "sha256:a724e0f9186022d82da0613c695fad63108edff9f23593b67c130b2f6c158e39",
+      "e1_sha256": "sha256:513d3548459b3a39a59166d5e93cd55ea5aafde643c4c5bb951ab641822db2be"
+    },
+    {
+      "case_id": "PILOT-POS-TFC-0041",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-TFC-0041-MEMO",
+      "omitted_claim_id": "C-TERMINATION-FOR-CONVENIENCE",
+      "omitted_category": "Termination For Convenience",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-CHANGE-OF-CONTROL",
+        "C-EXPIRATION-DATE",
+        "C-AUDIT-RIGHTS",
+        "C-ANTI-ASSIGNMENT"
+      ],
+      "removed_source_ids": [
+        "4dd3c78211ab:p0083"
+      ],
+      "e0_sha256": "sha256:1eecdfc06bbf04eed1d867fd51ff42ac292b2d1f60ac7a7a7abffebc57d772a8",
+      "e1_sha256": "sha256:da686ac8eba762767df55d79af0692f01134f922f495929ecdf4f4d2fa9949f9"
+    },
+    {
+      "case_id": "PILOT-POS-TFC-0459",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-TFC-0459-MEMO",
+      "omitted_claim_id": "C-TERMINATION-FOR-CONVENIENCE",
+      "omitted_category": "Termination For Convenience",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-CHANGE-OF-CONTROL",
+        "C-CAP-ON-LIABILITY",
+        "C-LICENSE-GRANT",
+        "C-GOVERNING-LAW"
+      ],
+      "removed_source_ids": [
+        "b13612159cc7:p0003"
+      ],
+      "e0_sha256": "sha256:890283958f4ef31d460b8e3df3df874ec6e42b6f224b6c864b82c6d94bcd9109",
+      "e1_sha256": "sha256:7d8ff63ce5ae741f49eb165d0913b16a90d56a8bb03ddc91226782502e77f33a"
+    },
+    {
+      "case_id": "PILOT-POS-TFC-0356",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-TFC-0356-MEMO",
+      "omitted_claim_id": "C-TERMINATION-FOR-CONVENIENCE",
+      "omitted_category": "Termination For Convenience",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-CHANGE-OF-CONTROL",
+        "C-EXPIRATION-DATE",
+        "C-IP-OWNERSHIP-ASSIGNMENT",
+        "C-CAP-ON-LIABILITY"
+      ],
+      "removed_source_ids": [
+        "874eb07ae363:p0003"
+      ],
+      "e0_sha256": "sha256:a686577fec4a61a604c63924367b6dc195a4b14671d5d9e86753160c7b45c0b3",
+      "e1_sha256": "sha256:830f8fffce5bbe12eebb51c5bee83f7b9ed6a4263d546cb678bbcb64d20fcf5a"
+    },
+    {
+      "case_id": "PILOT-POS-TFC-0352",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-TFC-0352-MEMO",
+      "omitted_claim_id": "C-TERMINATION-FOR-CONVENIENCE",
+      "omitted_category": "Termination For Convenience",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-CHANGE-OF-CONTROL",
+        "C-EXPIRATION-DATE",
+        "C-LICENSE-GRANT",
+        "C-ANTI-ASSIGNMENT"
+      ],
+      "removed_source_ids": [
+        "c757bb1d6007:p0012"
+      ],
+      "e0_sha256": "sha256:53772922c8004eacacc536224d52aa69b0a2eedffff9e53c6c32b5189760258c",
+      "e1_sha256": "sha256:821e1939bd62564c47855a609a210022b19666ebaeefecdc6fc69d9b34c11037"
+    },
+    {
+      "case_id": "PILOT-POS-TFC-0505",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-TFC-0505-MEMO",
+      "omitted_claim_id": "C-TERMINATION-FOR-CONVENIENCE",
+      "omitted_category": "Termination For Convenience",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-CHANGE-OF-CONTROL",
+        "C-PARTIES",
+        "C-UNLIMITED-ALL-YOU-CAN-EAT-LICENSE",
+        "C-GOVERNING-LAW"
+      ],
+      "removed_source_ids": [
+        "d20ca7099b48:p0009"
+      ],
+      "e0_sha256": "sha256:baff445191838795fa5721f8273408705f685928395a6bb3d04fa71cfc096e01",
+      "e1_sha256": "sha256:3198576754eda838b243969d5f7a1706807812d9c6bdc0f08bbf6ce6ec8b7989"
+    },
+    {
+      "case_id": "PILOT-POS-TFC-0377",
+      "sentinel": false,
+      "memo_id": "PILOT-POS-TFC-0377-MEMO",
+      "omitted_claim_id": "C-TERMINATION-FOR-CONVENIENCE",
+      "omitted_category": "Termination For Convenience",
+      "omitted_status": "present",
+      "e0_claim_count": 5,
+      "e1_claim_count": 4,
+      "shape": "deletion",
+      "unchanged_claim_ids": [
+        "C-CHANGE-OF-CONTROL",
+        "C-GOVERNING-LAW",
+        "C-RENEWAL-TERM",
+        "C-ANTI-ASSIGNMENT"
+      ],
+      "removed_source_ids": [
+        "5369ed2fb8fc:p0002"
+      ],
+      "e0_sha256": "sha256:be8207bacb40004d219cefbb0342a84fe29daed3229e0dc0663d6efffd416454",
+      "e1_sha256": "sha256:d82c90beb0e17c3bb42ce461961d194113605d370bba88cb7f58b05c7e119860"
+    },
+    {
+      "case_id": "PILOT-SENT-COC-0456",
+      "sentinel": true,
+      "e0_only": true
+    },
+    {
+      "case_id": "PILOT-SENT-TFC-0107",
+      "sentinel": true,
+      "e0_only": true
+    },
+    {
+      "case_id": "PILOT-SENT-COC-0366",
+      "sentinel": true,
+      "e0_only": true
+    },
+    {
+      "case_id": "PILOT-SENT-TFC-0374",
+      "sentinel": true,
+      "e0_only": true
+    },
+    {
+      "case_id": "PILOT-SENT-COC-0203",
+      "sentinel": true,
+      "e0_only": true
+    },
+    {
+      "case_id": "PILOT-SENT-TFC-0213",
+      "sentinel": true,
+      "e0_only": true
+    },
+    {
+      "case_id": "PILOT-SENT-COC-0337",
+      "sentinel": true,
+      "e0_only": true
+    },
+    {
+      "case_id": "PILOT-SENT-TFC-0362",
+      "sentinel": true,
+      "e0_only": true
+    }
+  ]
+}

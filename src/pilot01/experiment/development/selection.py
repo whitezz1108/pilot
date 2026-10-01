@@ -132,6 +132,10 @@ EXCLUSION_CRITERIA: Mapping[str, str] = {
     "TARGET_ABSENT_IN_POSITIVE_POOL": (
         "a positive case must have its target clause present"
     ),
+    "SENTINEL_NEAR_MISS_SCREEN": (
+        "the negative sentinel contains contract language that may be a near-miss "
+        "for a target category and is excluded before model runs"
+    ),
 }
 """Every reason a contract can be excluded, with why the criterion exists.
 
@@ -710,6 +714,7 @@ def select_development_cases(
     positive_quotas: Mapping[str, int] | None = None,
     sentinel_count: int = SENTINEL_COUNT,
     duplicate_of: Mapping[str, str] | None = None,
+    sentinel_excluded_contract_ids: Iterable[str] = (),
 ) -> SelectionReport:
     """Select the twelve development cases from the frozen CUAD annotations.
 
@@ -745,6 +750,7 @@ def select_development_cases(
         )
 
     duplicate_of = dict(duplicate_of or {})
+    sentinel_excluded = set(sentinel_excluded_contract_ids)
     first, second = policy_targets
     source_fingerprint = "sha256:" + annotations.source_digest.removeprefix("sha256:")
 
@@ -754,6 +760,15 @@ def select_development_cases(
     def consider(kind: str, target: str, other: str) -> None:
         bucket = candidates.setdefault(kind if kind == "sentinel" else f"{kind}:{target}", [])
         for contract in annotations.contracts:
+            if kind == "sentinel" and contract.contract_id in sentinel_excluded:
+                excluded.append(
+                    Excluded(
+                        contract_id=contract.contract_id,
+                        kind="sentinel",
+                        reasons=("SENTINEL_NEAR_MISS_SCREEN",),
+                    )
+                )
+                continue
             if contract.contract_id in duplicate_of:
                 excluded.append(
                     Excluded(

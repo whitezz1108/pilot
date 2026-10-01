@@ -1,0 +1,8 @@
+{
+  "status": "researcher_confirmed_complete",
+  "confirmed_by": "user in current Codex task",
+  "confirmation_date": "2026-09-24",
+  "scope": "manual review for the current study, applied to the frozen main-pilot sample",
+  "independent_case_review_record_present": false,
+  "interpretation": "The user's confirmation is the review-status evidence; no additional review is requested."
+}

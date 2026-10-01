@@ -1,0 +1,519 @@
+{
+  "experiment_manifest_version": "1",
+  "frozen_at_utc": "2026-09-23T18:36:29.740486+00:00",
+  "experiment_id": "pilot01_main_v1_20260924",
+  "working_baseline_status": "frozen_traceable_working_baseline",
+  "protocol_status": "No standalone formal protocol found; rules compiled from implementation note, versioned research decisions, Phase 1 audit, and current configuration.",
+  "source_authority": {
+    "implementation_note": {
+      "path": "C:\\Users\\44977\\Documents\\xwechat_files\\wxid_suot0fzeaqcv21_9158\\msg\\file\\2026-09\\CUAD_MAS_pilot_实施说明.md",
+      "sha256": "193755f538570b685c634297fa80710d2a39dce847f63728a1559051e9d32845"
+    },
+    "versioned_decision": {
+      "path": "gate4_5_refactor_progress.md",
+      "sha256": "6d47d75e321818bec2f335636b86140c9b6a728f611b24c2ff5a05226ed1831b",
+      "lines": "207-234"
+    },
+    "researcher_review_attestation": {
+      "path": "data/pilot01/main_v1/review_attestation_v1.json",
+      "sha256": "034e2dd42c7d8fea4c31f74c246419c4b2e17686638da1d9c3b4b7be10f987e1",
+      "status": "manual review complete per current user confirmation; independent record absent and not a blocker"
+    }
+  },
+  "git_snapshot": {
+    "head": "f473a6c48aa161de5c2f37174f4141eec8f310eb",
+    "branch": "main",
+    "status_porcelain_at_freeze": "M .gitignore\n M scripts/live_smoke.py\n M src/pilot01/experiment/development/selection.py\n?? CUAD_Pilot_Research_Update.pptx\n?? Gate4_Metrics_Onepager.html\n?? Gate4_Review_Checklist_onepager.png\n?? Phase-1-Experiment-Audit-Prompt-v2.md\n?? Phase-2-Freeze-and-Pilot-Execution-Prompt-v2.md\n?? Phase-3-Pilot-Analysis-and-Research-Report-Prompt-v2.md\n?? Pilot_Gate4_Review.pptx\n?? data/pilot01/\n?? outputs_snapshot_gate4.5/\n?? scripts/Load-Pilot01ApiEnv.ps1\n?? scripts/build_formal_pilot_cases.py\n?? scripts/freeze_formal_pilot_baseline.py",
+    "working_tree_is_dirty": true,
+    "source_file_hashes_are_authoritative_for_dirty_snapshot": true
+  },
+  "runtime": {
+    "python": "3.12.10",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "installed_distributions": [
+      "PyYAML==6.0.3",
+      "Pygments==2.21.0",
+      "annotated-types==0.8.0",
+      "colorama==0.4.6",
+      "iniconfig==2.3.0",
+      "packaging==26.3",
+      "pilot01==0.1.0",
+      "pilot01==0.1.0",
+      "pip==26.2.1",
+      "pluggy==1.6.0",
+      "pydantic==2.13.5",
+      "pydantic_core==2.46.5",
+      "pytest==9.1.1",
+      "typing-inspection==0.4.4",
+      "typing_extensions==4.16.0"
+    ]
+  },
+  "policy": {
+    "id": "POLICY-01",
+    "version": "v2",
+    "path": "config/policies/policy_v2.yaml",
+    "sha256": "55f0239717b6fa4f3a2e90cd2e2120add0a74c40765cb144b39175f99ad83dc3",
+    "fingerprint": "sha256:976571cc0be2f781e54e4f9d0af482a7a88e4156c809b4132205d225618e0cd9",
+    "mapping": {
+      "present": "ESCALATE",
+      "both_absent": "ACCEPT",
+      "other_or_unknown": "REVIEW"
+    }
+  },
+  "conditions": {
+    "version": "1",
+    "path": "config/conditions_v1.yaml",
+    "sha256": "501cdaa1b4aaf05f102b734af78cb7cf85af167e18675946771240519f29f47c",
+    "main": [
+      "A0V0",
+      "A1V0",
+      "A1V1"
+    ],
+    "excluded": [
+      "A0V1"
+    ]
+  },
+  "workflow": {
+    "version": "1",
+    "path": "config/workflow_v1.yaml",
+    "sha256": "0744e3dee529c15ea9356b7184c11ea17e8c108f80a8451a8e5cb1e79cba7140",
+    "order": [
+      "analyst_offline_memo_load",
+      "manager",
+      "compliance",
+      "final"
+    ],
+    "revision_rounds": 0
+  },
+  "models": {
+    "version": "1",
+    "path": "config/models_v1.yaml",
+    "sha256": "143d12b2becdd0409204a82e62bfa5309f558babf76c98be192dba32ea449dcb",
+    "roles": [
+      "manager",
+      "compliance"
+    ],
+    "provider": "openai-compatible",
+    "model_id": "DeepSeek-V4.1-Flash",
+    "temperature": 0.0,
+    "top_p": null,
+    "max_output_tokens": 16384,
+    "timeout_seconds": 180.0,
+    "environment_check": "loader previously verified required vars present and model ID matched config; secret and base URL values excluded"
+  },
+  "prompts": {
+    "manifest": "data/pilot01/main_v1/prompt_manifest.yaml",
+    "manifest_sha256": "5eb4ccdec20ab1a8a71dfcc7d09246e5d69c2280b1f5cec2b9a67cc7cc596cab",
+    "versions": {
+      "manager": "v3",
+      "compliance": "v3",
+      "repair": "v3_format_only"
+    }
+  },
+  "data": {
+    "source_dataset": {
+      "path": "C:\\Users\\44977\\Desktop\\pilot01\\data\\raw\\cuad\\extracted\\CUADv1.json",
+      "sha256": "ed0b77d85bdf4014d7495800e8e4a70565b48ee6f8a2e5dca9cf8655dbf10eae"
+    },
+    "registry": {
+      "path": "data/pilot01/main_v1/case_registry_v1.json",
+      "sha256": "143831b3976eea1c52e8ff3bfc57742fd91143b2a0d6b146603363751fc68d22",
+      "cases": 40,
+      "positive": 32,
+      "negative_sentinels": 8
+    },
+    "selection": {
+      "path": "data/pilot01/main_v1/case_selection_v1.json",
+      "sha256": "9538a2367eba4a68855b8fdd206c5864278087ec9a0bbf86530715acd91e366c",
+      "seed": 20260924,
+      "fingerprint": "sha256:2ddb47a4fbc58c2522ea700698072911d81f3325fd340b66ad816d7026bdccfb"
+    },
+    "memo_pair_audit": {
+      "path": "data/pilot01/main_v1/memo_pair_audit_v1.json",
+      "sha256": "146f9f95c2deaf9efb51194d126f10d4b05df858dd890100e990d5b2ab8cff46",
+      "all_checks_passed": true,
+      "positive_pairs": 32,
+      "sentinels_e0_only": 8,
+      "e1_construction": "pure deletion of target claim and its evidence"
+    },
+    "hidden_gold_digest": {
+      "algorithm": "sha256 over canonical JSON of contract_id, target_category, gold status, and evidence offsets",
+      "sha256": "f997e4579b217397315a37ed535b00e466ccad85873c605b1f82c8ccf0a95be1",
+      "values_not_serialized": true
+    }
+  },
+  "run_plan": {
+    "path": "data/pilot01/main_v1/run_plan_v1.json",
+    "sha256": "a1b2e3a0f14930373d0dbc385a729be96f62010d1b02366727cff4c752e114c6",
+    "csv_path": "data/pilot01/main_v1/run_plan_v1.csv",
+    "csv_sha256": "a9a3569836791ddc87464a830e30fee2cd11d310408c49d11b125f37b8b8bb01",
+    "experiment_plan_version": "1",
+    "experiment_version": "1",
+    "seed": 2026092401,
+    "repeat_count": 3,
+    "case_count": 40,
+    "condition_ids": [
+      "A0V0",
+      "A1V0",
+      "A1V1"
+    ],
+    "run_count": 648,
+    "unique_run_ids": 648,
+    "positive_runs": 576,
+    "sentinel_runs": 72,
+    "matrix": {
+      "E0/A0V0": 120,
+      "E0/A1V0": 120,
+      "E0/A1V1": 120,
+      "E1/A0V0": 96,
+      "E1/A1V0": 96,
+      "E1/A1V1": 96
+    },
+    "repeat_index_counts": {
+      "0": 216,
+      "1": 216,
+      "2": 216
+    },
+    "model_fingerprint": "models_v1|manager=openai-compatible:DeepSeek-V4.1-Flash/T=0/top_p=default/max=16384;compliance=openai-compatible:DeepSeek-V4.1-Flash/T=0/top_p=default/max=16384"
+  },
+  "measurement": {
+    "primary_outcome": "omission_recovered_with_evidence",
+    "unit_of_analysis": "contract; repetitions nested within contract x condition",
+    "primary_denominator": "completed positive E1 runs only; failures reported separately; completed A0V0 positive E1 is structural false; E0 and sentinels are N/A",
+    "evidence_rule": "at least one pre-Final node correctly recovers the omitted target and cites same-contract source opened by that node overlapping gold span",
+    "additional_outcomes": [
+      "fact recovery",
+      "final action correctness",
+      "manager/compliance error survival",
+      "evidence-backed correction",
+      "sentinel false escalation",
+      "REVIEW rate",
+      "tool use",
+      "tokens",
+      "latency",
+      "schema validity"
+    ]
+  },
+  "execution_policy": {
+    "mode": "live provider calls via scripts/Load-Pilot01ApiEnv.ps1",
+    "technical_retries": 0,
+    "format_only_repair_max": 1,
+    "failed_and_interrupted_runs": "preserve original request/response and failure artifacts; no silent reruns or overwrites",
+    "cost_estimation": "not available; no versioned pricing table frozen",
+    "api_secret_or_endpoint_recorded": false
+  },
+  "files": {
+    "config\\conditions_v1.yaml": {
+      "sha256": "501cdaa1b4aaf05f102b734af78cb7cf85af167e18675946771240519f29f47c",
+      "bytes": 1809
+    },
+    "config\\models_v1.yaml": {
+      "sha256": "143d12b2becdd0409204a82e62bfa5309f558babf76c98be192dba32ea449dcb",
+      "bytes": 4701
+    },
+    "config\\policies\\policy_v2.yaml": {
+      "sha256": "55f0239717b6fa4f3a2e90cd2e2120add0a74c40765cb144b39175f99ad83dc3",
+      "bytes": 8541
+    },
+    "config\\workflow_v1.yaml": {
+      "sha256": "0744e3dee529c15ea9356b7184c11ea17e8c108f80a8451a8e5cb1e79cba7140",
+      "bytes": 1405
+    },
+    "data\\pilot01\\main_v1\\build_manifest_v1.json": {
+      "sha256": "326dcd7589e50a56efae52ff2bad15d3d22c713d2f9aa4ec4053c40f9de81b5d",
+      "bytes": 6321
+    },
+    "data\\pilot01\\main_v1\\case_registry_v1.json": {
+      "sha256": "143831b3976eea1c52e8ff3bfc57742fd91143b2a0d6b146603363751fc68d22",
+      "bytes": 2923327
+    },
+    "data\\pilot01\\main_v1\\case_selection_v1.json": {
+      "sha256": "9538a2367eba4a68855b8fdd206c5864278087ec9a0bbf86530715acd91e366c",
+      "bytes": 964004
+    },
+    "data\\pilot01\\main_v1\\memo_pair_audit_v1.json": {
+      "sha256": "146f9f95c2deaf9efb51194d126f10d4b05df858dd890100e990d5b2ab8cff46",
+      "bytes": 26229
+    },
+    "data\\pilot01\\main_v1\\review_attestation_v1.json": {
+      "sha256": "034e2dd42c7d8fea4c31f74c246419c4b2e17686638da1d9c3b4b7be10f987e1",
+      "bytes": 396
+    },
+    "data\\pilot01\\main_v1\\run_plan_v1.csv": {
+      "sha256": "a9a3569836791ddc87464a830e30fee2cd11d310408c49d11b125f37b8b8bb01",
+      "bytes": 197188
+    },
+    "data\\pilot01\\main_v1\\run_plan_v1.json": {
+      "sha256": "a1b2e3a0f14930373d0dbc385a729be96f62010d1b02366727cff4c752e114c6",
+      "bytes": 391800
+    },
+    "gate4_5_refactor_progress.md": {
+      "sha256": "6d47d75e321818bec2f335636b86140c9b6a728f611b24c2ff5a05226ed1831b",
+      "bytes": 14211
+    },
+    "outputs\\reports\\phase1_architecture_audit.md": {
+      "sha256": "88a203c0be1440d193c34a0d1147a1896de8650b317a9afebcc7931125dca01c",
+      "bytes": 4925
+    },
+    "outputs\\reports\\phase1_gap_analysis.md": {
+      "sha256": "e4309ddd638031ee84efd85825c233ece12694efdd1f659593f5cba847cad5e1",
+      "bytes": 4895
+    },
+    "outputs\\reports\\phase1_minimal_fix_plan.md": {
+      "sha256": "9ca160ba7be307320e8391ca0403f72822d4540c68249106e53559414a6e01be",
+      "bytes": 3009
+    },
+    "outputs\\reports\\phase1_requirement_matrix.md": {
+      "sha256": "8927ccff41d8916efa3bf2a61e2a40f6b86db828998c08d87510049e2358ca2d",
+      "bytes": 9278
+    },
+    "Phase-1-Experiment-Audit-Prompt-v2.md": {
+      "sha256": "a75b855a988b60d675cd35036b8d945f3b245ae9fdd6fedd1f06937d7426af1f",
+      "bytes": 6914
+    },
+    "Phase-2-Freeze-and-Pilot-Execution-Prompt-v2.md": {
+      "sha256": "236e95ea465557de9a8f441a15acaefe6e8a8b06f8d128d795dd1e14935541e2",
+      "bytes": 7231
+    },
+    "Phase-3-Pilot-Analysis-and-Research-Report-Prompt-v2.md": {
+      "sha256": "c8a4ad7c3a2b7b2f6d59eb8ea0a9f5bd98797e5bc63f236a29bad4d0dfaeed83",
+      "bytes": 5529
+    },
+    "prompts\\compliance_v3.md": {
+      "sha256": "d8cc6d4bad0d6d26867231343dd4b9cb6037b07c3266875ce73018bdae09514d",
+      "bytes": 9753
+    },
+    "prompts\\manager_v3.md": {
+      "sha256": "e0eb5f7a64ca904090c7aa6aeb08545834970eb7fb7b943c9dd8027244c96730",
+      "bytes": 9044
+    },
+    "prompts\\repair_v3.md": {
+      "sha256": "f8fc4e53835efd6675f6d748a991b1ded15547a0a523454816c6f30003e55d08",
+      "bytes": 1031
+    },
+    "pyproject.toml": {
+      "sha256": "b8c1fb0f89513581e35ca90ecba92c170ad1620a2fa86cf7b71bb873e2211d43",
+      "bytes": 543
+    },
+    "scripts\\build_formal_pilot_cases.py": {
+      "sha256": "40654c6337c0de11511a79d6a49bc02de1281b2130ed1a8f10808d221e711181",
+      "bytes": 17069
+    },
+    "scripts\\freeze_formal_pilot_baseline.py": {
+      "sha256": "78d243f1de61656bbb263102587a55fbed3f1dbf7737a5ac0c54bb4521f065b7",
+      "bytes": 13441
+    },
+    "scripts\\Load-Pilot01ApiEnv.ps1": {
+      "sha256": "54d23918d8c7b44b1b8b091645779e5c91f00aaf7cbed3798eabc9d580d8b641",
+      "bytes": 2012
+    },
+    "src\\pilot01\\__init__.py": {
+      "sha256": "0562ab82be183999c83567e43b94970e5ebbbed5dc48b64d4f18221c3dfa5871",
+      "bytes": 2370
+    },
+    "src\\pilot01\\config.py": {
+      "sha256": "0de0584f70cadeffd3027f59fcdb3516a0d642ca6078111d6de1682d0e2da587",
+      "bytes": 21574
+    },
+    "src\\pilot01\\events.py": {
+      "sha256": "ddff3fb01945905f51651c29562949d51bd631cdc632a0cee7dd473b994fe90d",
+      "bytes": 4035
+    },
+    "src\\pilot01\\experiment\\__init__.py": {
+      "sha256": "02be9f885be331fb248c55fe23456e0d7c3f3b5642fbca651125df55b500a69f",
+      "bytes": 4411
+    },
+    "src\\pilot01\\experiment\\__main__.py": {
+      "sha256": "7fae1c5bc59bba19fd9e8ee6ec4a652df3928eb6e68d1cbcd6ea05db1058363c",
+      "bytes": 197
+    },
+    "src\\pilot01\\experiment\\artifacts.py": {
+      "sha256": "a2db6905a243903c84918ec12c8e764421c9dfed3e2b49b0199147b1b30a0dcf",
+      "bytes": 21715
+    },
+    "src\\pilot01\\experiment\\batch.py": {
+      "sha256": "ed46bb1388002f3a459dfc70bad89372d8e9d9b580b1659a3c8535a716750228",
+      "bytes": 20816
+    },
+    "src\\pilot01\\experiment\\cases.py": {
+      "sha256": "436730ba8ee47e26055e28ded2e30b53d43920224f3a526206fa4d525f71062c",
+      "bytes": 23435
+    },
+    "src\\pilot01\\experiment\\cli.py": {
+      "sha256": "240f1ac265b13bd500e61342b17aeb711138da9e88e857b2f7ff9daa99dee0b0",
+      "bytes": 17752
+    },
+    "src\\pilot01\\experiment\\development\\__init__.py": {
+      "sha256": "6bb9a9f664f03a83f2046a0267aea8d0c8130d78455b9b96598c95f518530304",
+      "bytes": 3658
+    },
+    "src\\pilot01\\experiment\\development\\build.py": {
+      "sha256": "b48a46791c1e4e1963ea55920fe215c650944782881629dcffed19986285a0f4",
+      "bytes": 6118
+    },
+    "src\\pilot01\\experiment\\development\\cuad_annotations.py": {
+      "sha256": "7027ec6947d254dffdf89ad4221bfad88983deab5d9cbfdeff9cc15482dff4f6",
+      "bytes": 13823
+    },
+    "src\\pilot01\\experiment\\development\\diagnostics.py": {
+      "sha256": "dced12e94a0176355f9286b0ab33c8cc6316a52bec03a4e4cad641ac3d84f70a",
+      "bytes": 44740
+    },
+    "src\\pilot01\\experiment\\development\\memoqc.py": {
+      "sha256": "dd8a79893c94748fb4d689a4989ba8e627789b395ecbc137bf6b0826a8ec1582",
+      "bytes": 10591
+    },
+    "src\\pilot01\\experiment\\development\\memos.py": {
+      "sha256": "296d3fb7f4e5b4c4b5bd1b3b21381fa66d5892093062d537635baf9187681331",
+      "bytes": 14688
+    },
+    "src\\pilot01\\experiment\\development\\registry.py": {
+      "sha256": "6010a9fc0960c19e133986a7abee1058d9f539a365b171bf41b62bdda904a1f4",
+      "bytes": 21005
+    },
+    "src\\pilot01\\experiment\\development\\review.py": {
+      "sha256": "7fda4740311f396a7ac0eae3b363a1544fb6d1d5d432ca2ec09baf96e36a3fc9",
+      "bytes": 13424
+    },
+    "src\\pilot01\\experiment\\development\\selection.py": {
+      "sha256": "424cccb07230182e709bf7ae46e77e3e408879641775ebd612b4d1f72613932c",
+      "bytes": 41075
+    },
+    "src\\pilot01\\experiment\\layout.py": {
+      "sha256": "7845894cf19fabeab3a9202274562849ff215129addcdcb169f3272088682517",
+      "bytes": 3194
+    },
+    "src\\pilot01\\experiment\\runspec.py": {
+      "sha256": "f3da1272703742e0039070fcb3182fa07806ad41bcb63bdb082e5a465c9b2a47",
+      "bytes": 25676
+    },
+    "src\\pilot01\\experiment\\scoring.py": {
+      "sha256": "2a6c5d9f4e88b3e9ccb7eade927627d5e580f979e64744e53c91c7bca967f05f",
+      "bytes": 51633
+    },
+    "src\\pilot01\\experiment\\summary.py": {
+      "sha256": "75450e686faeee3656ee9902fa64179141d7dea9482bfadd3fe15bc74ebde2d5",
+      "bytes": 14692
+    },
+    "src\\pilot01\\model\\__init__.py": {
+      "sha256": "52d15167a007b8cb94ef595ed27683447579ae67369870ebe7ec0567cf0424b4",
+      "bytes": 2240
+    },
+    "src\\pilot01\\model\\client.py": {
+      "sha256": "f3eafb9938a96cd9598f48a8ef553b36ae192459cde4a23fb2e185af1bc5cf0b",
+      "bytes": 7329
+    },
+    "src\\pilot01\\model\\log.py": {
+      "sha256": "4163e1274d78a0200d579115adaed5f2a09b7442eb4f920e193f77de8b4e2844",
+      "bytes": 7972
+    },
+    "src\\pilot01\\model\\openai_compat.py": {
+      "sha256": "96db0175e3039eb7753fd3c63d3137694321a0a37addf4b154ef6d8e7f0e51e3",
+      "bytes": 11365
+    },
+    "src\\pilot01\\model\\parsing.py": {
+      "sha256": "074a63d6d9ec7b40bcc47c169b3b92795cd3f4be029abfdf8f64e58a5a8e7ea2",
+      "bytes": 14709
+    },
+    "src\\pilot01\\model\\scripted.py": {
+      "sha256": "3e6f17acc2016e20cd42458d90d3076d636544d6dacb5a440a60af8b0b041350",
+      "bytes": 5191
+    },
+    "src\\pilot01\\prompts.py": {
+      "sha256": "7396f564cba4400b317079380e4b3fae041ca5529d06e6d1f553a5befefccf3c",
+      "bytes": 5747
+    },
+    "src\\pilot01\\schemas.py": {
+      "sha256": "e1c985296dc76a897ec6dda111b3a03cb2950c6bba8f72297db99f1a1d904f17",
+      "bytes": 26567
+    },
+    "src\\pilot01\\source\\__init__.py": {
+      "sha256": "26ed504f6676580d0b533cfd0ee9e2b0ec6f04c841a415ec5712abfb7d40a3ca",
+      "bytes": 2985
+    },
+    "src\\pilot01\\source\\cuad.py": {
+      "sha256": "16198a8239233545212a27f2260699448976ea2f77398aa9f2a6d8bec7e55437",
+      "bytes": 8928
+    },
+    "src\\pilot01\\source\\document.py": {
+      "sha256": "dcaf2e890ab9999efa800a74381c046962e0ef637da189f5e7791c8ad4de5e75",
+      "bytes": 9679
+    },
+    "src\\pilot01\\source\\index.py": {
+      "sha256": "9dc0a1bd5abaf1053b05ffc165c735d3c44106d12e348988c7891583fcc9f4d0",
+      "bytes": 6006
+    },
+    "src\\pilot01\\source\\ledger.py": {
+      "sha256": "3fada4ffc4578a908646a04eec6bb9d351fc65805eb8147a069175f621f500b7",
+      "bytes": 8833
+    },
+    "src\\pilot01\\source\\tools.py": {
+      "sha256": "3f560a087a35f22bf13d77ef0c79a9ff1e13e3344f2c387a767ebd978480392b",
+      "bytes": 24587
+    },
+    "src\\pilot01\\source\\verification.py": {
+      "sha256": "3cfce6b8bb6eeffef1a742f9599bc4908e7b4167a180a24fb4a6698a71411f74",
+      "bytes": 18053
+    },
+    "src\\pilot01\\workflow\\__init__.py": {
+      "sha256": "927d13ff54918603017f4e90315b99a135be0f25f95a375268f643fc921ec35c",
+      "bytes": 1749
+    },
+    "src\\pilot01\\workflow\\export.py": {
+      "sha256": "f226b7ce3470f0fc368ee71e53f13fc4d3bcf2101f25ecc41ca16198fe096fe5",
+      "bytes": 8176
+    },
+    "src\\pilot01\\workflow\\nodes\\__init__.py": {
+      "sha256": "80c3c59a75f1305a39846fee7b5f9789202caaebe725a91205edb4dd5b5f096a",
+      "bytes": 6972
+    },
+    "src\\pilot01\\workflow\\nodes\\analyst.py": {
+      "sha256": "33f66e4ea3aa365a95d33dd08ffa1d5ffc6ae63c372d92caa9798a195650ee49",
+      "bytes": 4894
+    },
+    "src\\pilot01\\workflow\\nodes\\compliance.py": {
+      "sha256": "db8645504c74aa5e68983158e8d8606b3bd7ecdb7659b02e7bf539b833c1022f",
+      "bytes": 7607
+    },
+    "src\\pilot01\\workflow\\nodes\\llm_agent.py": {
+      "sha256": "13e24829178b5dd5902c66b5adec5544e384075edf92c5db8e8eeb8a561f68fe",
+      "bytes": 13195
+    },
+    "src\\pilot01\\workflow\\nodes\\manager.py": {
+      "sha256": "5a3f7afb94cb23d34b7f3c3780095a477cbce6da172c5cfab6f810100a7e1039",
+      "bytes": 7074
+    },
+    "src\\pilot01\\workflow\\nodes\\render.py": {
+      "sha256": "f8c5efc26dc6011c07f3441bfd39a62905c3986328a21b4fd552e7f029a01d25",
+      "bytes": 7360
+    },
+    "src\\pilot01\\workflow\\nodes\\script.py": {
+      "sha256": "1be8340abe838edd08162edf322aee8426791beb42f3fce3521ee41359cff3ac",
+      "bytes": 3753
+    },
+    "src\\pilot01\\workflow\\nodes\\tool_loop.py": {
+      "sha256": "b457bcd45734004df3a183ce044a3066676fa9ea9a11f94aa1dabc4feec8bd3d",
+      "bytes": 14424
+    },
+    "src\\pilot01\\workflow\\runner.py": {
+      "sha256": "a5eca991f40959f2fef705edd0aaf9925b91562dbfd514410b69625d7a00877c",
+      "bytes": 11535
+    },
+    "src\\pilot01\\workflow\\state.py": {
+      "sha256": "c40c297d0963f6d3387873574a7e5506db0e442cb6571ee8feb667ac5be177d9",
+      "bytes": 12392
+    },
+    "src\\pilot01\\workflow\\transitions.py": {
+      "sha256": "64b6e7b17d645fa78d2d5b76e4362e107eb895c73bcb34086d39465f0559d9bc",
+      "bytes": 4645
+    },
+    "src\\pilot01\\workflow\\views.py": {
+      "sha256": "74a3ca3c968efe52765765beabd543a1b5a1035b9d0323ba05416c1bc9d30cab",
+      "bytes": 8858
+    },
+    "C:\\Users\\44977\\Documents\\xwechat_files\\wxid_suot0fzeaqcv21_9158\\msg\\file\\2026-09\\CUAD_MAS_pilot_实施说明.md": {
+      "sha256": "193755f538570b685c634297fa80710d2a39dce847f63728a1559051e9d32845",
+      "bytes": 8439
+    }
+  }
+}

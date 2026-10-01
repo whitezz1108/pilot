@@ -13,8 +13,9 @@ result is derived from it.
 
 What it does, and what it deliberately does not:
 
-* **One request.** A single tiny chat completion, a handful of output tokens,
-  through :class:`~pilot01.model.openai_compat.OpenAICompatibleClient` -- the
+* **One request.** A single tiny expected JSON answer, using the Manager's
+  configured token and timeout ceilings so reasoning models can reach their
+  answer, through :class:`~pilot01.model.openai_compat.OpenAICompatibleClient` -- the
   same adapter a live run would use, so the thing being smoked is the real path
   and not a copy of it.
 * **Gated on an explicit flag.** Without ``PILOT01_SMOKE=1`` it prints what it
@@ -40,7 +41,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from pilot01.model import ModelCallLog, ModelParams, ModelRequest, ModelMessage  # noqa: E402
+from pilot01.config import load_models_v1  # noqa: E402
+from pilot01.model import ModelCallLog, ModelRequest, ModelMessage  # noqa: E402
 from pilot01.model.client import ModelClientError  # noqa: E402
 from pilot01.model.log import assert_no_secrets  # noqa: E402
 from pilot01.model.openai_compat import (  # noqa: E402
@@ -68,14 +70,9 @@ def main() -> int:
         )
         return 2
 
-    model_id = os.environ.get(MODEL_ID_ENV, "gpt-4o-mini")
-    params = ModelParams(
-        provider="openai-compatible",
-        model_id=model_id,
-        temperature=0.0,
-        max_output_tokens=32,
-        timeout_seconds=30.0,
-    )
+    configured_params = load_models_v1().for_role("manager")
+    model_id = os.environ.get(MODEL_ID_ENV, configured_params.model_id)
+    params = configured_params.model_copy(update={"model_id": model_id})
 
     try:
         client = OpenAICompatibleClient()
@@ -121,6 +118,7 @@ def main() -> int:
 
     print(f"provider: {response.provider}")
     print(f"request_id: {response.request_id}")
+    print(f"finish_reason: {response.finish_reason}")
     print(f"latency_seconds: {response.latency_seconds}")
     print(f"raw_response: {response.text!r}")
 

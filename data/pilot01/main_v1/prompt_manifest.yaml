@@ -1,0 +1,32 @@
+{
+  "prompt_manifest_version": "1",
+  "runtime_prompt_bundle": "pilot01-prompts-v3",
+  "loader": {
+    "path": "src/pilot01/prompts.py",
+    "sha256": "7396f564cba4400b317079380e4b3fae041ca5529d06e6d1f553a5befefccf3c"
+  },
+  "prompts": [
+    {
+      "role": "manager",
+      "version": "v3",
+      "path": "prompts\\manager_v3.md",
+      "sha256": "e0eb5f7a64ca904090c7aa6aeb08545834970eb7fb7b943c9dd8027244c96730",
+      "bytes": 9044
+    },
+    {
+      "role": "compliance",
+      "version": "v3",
+      "path": "prompts\\compliance_v3.md",
+      "sha256": "d8cc6d4bad0d6d26867231343dd4b9cb6037b07c3266875ce73018bdae09514d",
+      "bytes": 9753
+    },
+    {
+      "role": "repair_format_only",
+      "version": "v3",
+      "path": "prompts\\repair_v3.md",
+      "sha256": "f8fc4e53835efd6675f6d748a991b1ded15547a0a523454816c6f30003e55d08",
+      "bytes": 1031
+    }
+  ],
+  "notes": "All main runs use this exact prompt bundle; no prompt edits or version pooling during the pilot."
+}

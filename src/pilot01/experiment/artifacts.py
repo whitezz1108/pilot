@@ -513,7 +513,10 @@ def _read_jsonl(path: Path, model: Any, label: str) -> tuple:
     if not path.is_file():
         return ()
     records = []
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    # JSONL records are delimited by LF. ``str.splitlines()`` also treats
+    # Unicode separators such as U+2028 inside valid JSON string values as
+    # record boundaries, which corrupts otherwise intact model-call records.
+    for number, line in enumerate(path.read_text(encoding="utf-8").split("\n"), start=1):
         if not line.strip():
             continue
         try:
