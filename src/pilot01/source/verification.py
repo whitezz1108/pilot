@@ -44,6 +44,9 @@ from .document import ContractDocument, is_paragraph_id
 from .ledger import EvidenceClass, EvidenceLedger
 
 __all__ = [
+    "VALIDATOR_VERSION",
+    "TargetSearchAudit",
+    "CitationAudit",
     "VerificationFailure",
     "VerificationOutcome",
     "VerificationLog",
@@ -51,6 +54,8 @@ __all__ = [
     "unverifiable_outcome",
     "derive_basis",
 ]
+
+VALIDATOR_VERSION = "validator_v2"
 
 #: How a derived basis reads as a verdict. The mapping is total over
 #: ``VerificationBasis``, so a node's status is a function of what it did.
@@ -81,7 +86,7 @@ class VerificationFailure(str, Enum):
     """The node reported no evidence ids of any kind."""
 
     EVIDENCE_NOT_OPENED = "evidence_not_opened"
-    """No cited evidence was opened, or an id claimed as opened was not opened."""
+    """A relied-on paragraph or an id claimed as opened was not opened here."""
 
     EVIDENCE_NOT_IN_CONTRACT = "evidence_not_in_contract"
     """A reported id is shaped like a paragraph id but is not in this contract."""
@@ -120,6 +125,26 @@ class VerificationFailure(str, Enum):
 
     SOURCE_TOOLS_UNAVAILABLE = "source_tools_unavailable"
     """Verification was required but this condition provides no source tools."""
+
+
+class TargetSearchAudit(BaseModel):
+    """Successful category-named searches in this node invocation."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    category: str
+    matched_queries: tuple[str, ...] = ()
+
+
+class CitationAudit(BaseModel):
+    """Trace facts about one reported reference; no semantic entailment claim."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    source_id: str
+    reported_as: str
+    paragraph_reference: bool
+    self_opened: bool
+    in_contract: bool | None
+    observed: bool
 
 
 class VerificationOutcome(BaseModel):
@@ -164,6 +189,13 @@ class VerificationOutcome(BaseModel):
     """Whether the node actually consulted the source, as opposed to saying so."""
     failures: tuple[VerificationFailure, ...] = ()
     diagnostics: tuple[str, ...] = ()
+    # None identifies historical records or an arm without source access.
+    validator_version: str | None = None
+    validation_pass: bool | None = None
+    audit_failures: tuple[VerificationFailure, ...] = ()
+    target_search_audit: tuple[TargetSearchAudit, ...] = ()
+    citation_audit: tuple[CitationAudit, ...] = ()
+    actual_opened_paragraph_ids: tuple[str, ...] = ()
 
     @property
     def satisfied(self) -> bool:
@@ -237,6 +269,9 @@ def unverifiable_outcome(note: str, *, node: str = "", invocation: int = 0) -> V
         required=True,
         checked=False,
         failures=(VerificationFailure.SOURCE_TOOLS_UNAVAILABLE,),
+        validator_version=VALIDATOR_VERSION,
+        validation_pass=False,
+        audit_failures=(VerificationFailure.SOURCE_TOOLS_UNAVAILABLE,),
         diagnostics=(note,),
     )
 
@@ -289,8 +324,8 @@ def evaluate_verification(
 
     1. the policy rule under test is named;
     2. the node searched for every policy target category;
-    3. it reported at least one id, and at least one of them was *opened* rather
-       than merely returned by a search;
+    3. it reported evidence opened here, and every relied-on paragraph (including
+       an inherited source reference) was opened in this node invocation;
     4. every paragraph-shaped id it reported exists in this contract;
     5. every id it reported was observed by this node (opened, returned, or
        cited upstream to it);
@@ -355,10 +390,33 @@ def evaluate_verification(
             for start in range(len(query_terms) - len(category_terms) + 1)
         )
 
-    unsearched_targets = tuple(
-        category
+    target_audit = tuple(
+        TargetSearchAudit(
+            category=category,
+            matched_queries=tuple(
+                query for query in ledger.searches if names_category(query, category)
+            ),
+        )
         for category in policy.target_clause_categories
-        if not any(names_category(query, category) for query in ledger.searches)
+    )
+    unsearched_targets = tuple(item.category for item in target_audit if not item.matched_queries)
+    citation_audit = tuple(
+        CitationAudit(
+            source_id=source_id,
+            reported_as=reported_as,
+            paragraph_reference=is_paragraph_id(source_id),
+            self_opened=source_id in ledger.opened_ids,
+            in_contract=(
+                document is not None and document.paragraph(source_id) is not None
+                if is_paragraph_id(source_id) else None
+            ),
+            observed=source_id in observed,
+        )
+        for reported_as, source_ids in (
+            ("opened_paragraph_ids", provenance.opened_paragraph_ids),
+            ("inherited_source_ids", provenance.inherited_source_ids),
+        )
+        for source_id in source_ids
     )
     claimed_opened_but_not = tuple(
         paragraph_id
@@ -388,6 +446,10 @@ def evaluate_verification(
             rule_id=output.rule_id,
             checked=checked,
             diagnostics=tuple(diagnostics),
+            validator_version=VALIDATOR_VERSION,
+            target_search_audit=target_audit,
+            citation_audit=citation_audit,
+            actual_opened_paragraph_ids=tuple(sorted(ledger.opened_ids)),
             **extra,
         )
 
@@ -399,15 +461,10 @@ def evaluate_verification(
         if ids:
             diagnostics.append(f"{label}=" + ",".join(ids))
 
-    if not verification_required:
-        # V0: record what happened, penalise nothing. A node that searched and
-        # a node that did not are both legal here -- but a cited id that nothing
-        # this node saw could have produced is still written into the
-        # diagnostics, so "this run cited an id it never observed" stays visible
-        # in the record even though V0 does not act on it.
+    if not source_tools_available:
         return outcome(
             status=_STATUS_FOR_BASIS[derived],
-            note="verification was optional in this condition",
+            note="source verification is not applicable without source access",
         )
 
     failures: list[VerificationFailure] = []
@@ -420,7 +477,11 @@ def evaluate_verification(
         failures.append(VerificationFailure.TARGET_NOT_SEARCHED)
     if not reported:
         failures.append(VerificationFailure.NO_EVIDENCE_CITED)
-    elif len(unopened) == len(reported) or claimed_opened_but_not:
+    elif (
+        len(unopened) == len(reported)
+        or claimed_opened_but_not
+        or any(item.paragraph_reference and not item.self_opened for item in citation_audit)
+    ):
         failures.append(VerificationFailure.EVIDENCE_NOT_OPENED)
     if foreign:
         failures.append(VerificationFailure.EVIDENCE_NOT_IN_CONTRACT)
@@ -433,6 +494,9 @@ def evaluate_verification(
 
     return outcome(
         status=_STATUS_FOR_BASIS[derived],
-        note="verification required and enforced",
-        failures=tuple(failures),
+        note=("verification required and enforced" if verification_required
+              else "verification audited but optional in this condition"),
+        validation_pass=not failures,
+        audit_failures=tuple(failures),
+        failures=tuple(failures) if verification_required else (),
     )

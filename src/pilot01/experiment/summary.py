@@ -125,6 +125,8 @@ class ConditionSummary(BaseModel):
 
     manager_verification_satisfied: Rate
     compliance_verification_satisfied: Rate
+    manager_validation_pass: Rate = Field(default_factory=lambda: Rate.of(()))
+    compliance_validation_pass: Rate = Field(default_factory=lambda: Rate.of(()))
 
     unknown_adopted_claims: int = Field(default=0, ge=0)
     """Runs in which a node adopted a claim it was never given."""
@@ -275,6 +277,8 @@ def _pool(rows: Sequence[RunScore], condition_id: str) -> ConditionSummary:
         compliance_verification_satisfied=Rate.of(
             row.compliance_verification_satisfied for row in rows
         ),
+        manager_validation_pass=Rate.of(row.manager_validation_pass for row in rows),
+        compliance_validation_pass=Rate.of(row.compliance_validation_pass for row in rows),
         unknown_adopted_claims=sum(1 for row in rows if row.unknown_adopted_claims),
         mean_tool_calls=_mean([row.tool_calls for row in rows]),
         mean_model_calls=_mean([row.model_calls for row in rows]),

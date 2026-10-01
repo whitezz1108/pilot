@@ -512,6 +512,10 @@ class RunScore(BaseModel):
     compliance_verification_checked: bool = False
     compliance_verification_satisfied: bool | None = None
     verification_failures: tuple[str, ...] = ()
+    manager_validation_pass: bool | None = None
+    compliance_validation_pass: bool | None = None
+    validator_versions: tuple[str, ...] = ()
+    verification_audit_failures: tuple[str, ...] = ()
 
     # -- declared vs derived verification ----------------------------------
     #
@@ -870,6 +874,12 @@ def score_run(
             return None
         return all(outcome.satisfied for outcome in outcomes)
 
+    def validation_pass(outcomes: Sequence) -> bool | None:
+        # Do not reinterpret historical or no-access records as complete audits.
+        if not outcomes or any(outcome.validation_pass is None for outcome in outcomes):
+            return None
+        return all(outcome.validation_pass for outcome in outcomes)
+
     def basis(outcomes: Sequence, attr: str) -> VerificationBasis | None:
         """The basis one node declared, or the one the ledger derived.
 
@@ -1092,6 +1102,15 @@ def score_run(
         ),
         compliance_verification_satisfied=satisfied(compliance_verifications),
         verification_failures=tuple(verification_failures),
+        manager_validation_pass=validation_pass(manager_verifications),
+        compliance_validation_pass=validation_pass(compliance_verifications),
+        validator_versions=tuple(sorted({
+            outcome.validator_version for outcome in raw.verifications
+            if outcome.validator_version is not None
+        })),
+        verification_audit_failures=tuple(sorted({
+            failure.value for outcome in raw.verifications for failure in outcome.audit_failures
+        })),
         manager_verification_basis_declared=basis(
             manager_verifications, "declared_basis"
         ),

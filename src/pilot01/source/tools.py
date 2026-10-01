@@ -599,6 +599,7 @@ def replay_ledger(
     records: Iterable[ToolCallRecord],
     *,
     node: str | None = None,
+    invocation: int | None = None,
     upstream: Iterable[str] = (),
 ) -> EvidenceLedger:
     """Rebuild an :class:`~pilot01.source.ledger.EvidenceLedger` from tool records.
@@ -608,7 +609,7 @@ def replay_ledger(
     from the log alone, which is what makes the conclusion auditable after the
     fact rather than only during the run.
 
-    ``node`` filters to one node's calls. Passing ``None`` replays every record
+    ``node`` and ``invocation`` filter the trace scope. Passing ``None`` replays every record
     given, which is right only for a log that holds one node's calls.
 
     ``upstream`` is the evidence the node was *handed* -- the memo's cited source
@@ -626,6 +627,8 @@ def replay_ledger(
     ledger.record_upstream(upstream)
     for record in records:
         if node is not None and record.node != node:
+            continue
+        if invocation is not None and record.invocation != invocation:
             continue
         if not record.ok:
             continue

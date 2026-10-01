@@ -65,6 +65,9 @@ from .tools import (
     replay_ledger,
 )
 from .verification import (
+    VALIDATOR_VERSION,
+    CitationAudit,
+    TargetSearchAudit,
     VerificationFailure,
     VerificationLog,
     VerificationOutcome,
@@ -110,6 +113,9 @@ __all__ = [
     "evidence_access",
     "replay_ledger",
     # verification
+    "VALIDATOR_VERSION",
+    "CitationAudit",
+    "TargetSearchAudit",
     "VerificationFailure",
     "VerificationLog",
     "VerificationOutcome",

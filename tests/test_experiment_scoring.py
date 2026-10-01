@@ -697,16 +697,23 @@ def test_verification_is_reported_per_node_and_per_condition(tmp_path):
     assert required.manager_verification_checked is True
     assert required.manager_verification_satisfied is True
     assert required.verification_failures == ()
+    assert required.manager_validation_pass is True
+    assert required.compliance_validation_pass is True
+    assert required.validator_versions == ("validator_v2",)
 
     assert optional.manager_verification_required is False
     assert optional.manager_verification_checked is True
     assert optional.manager_verification_satisfied is True
     assert optional.verification_failures == ()
+    # The optional fixture opens a paragraph but does not perform the full
+    # required-arm protocol. Permission to continue is not a complete pass.
+    assert optional.manager_validation_pass is False
 
     assert toolless.manager_verification_required is False
     assert toolless.manager_verification_checked is False
     assert toolless.manager_verification_satisfied is True
     assert toolless.verification_failures == ()
+    assert toolless.manager_validation_pass is None
 
 
 def test_a_failed_verification_is_recorded_on_the_row(tmp_path):
@@ -724,6 +731,30 @@ def test_a_failed_verification_is_recorded_on_the_row(tmp_path):
     assert row.verification_failure is True
     assert "no_tool_use" in row.verification_failures
     assert row.manager_verification_satisfied is False
+    assert row.manager_validation_pass is False
+    assert row.compliance_validation_pass is None  # Never reached.
+
+
+def test_optional_failed_audit_is_not_a_protocol_or_business_failure(tmp_path):
+    def without_tools(job, registry):
+        return {
+            "manager": (sample_case.manager_response_text(),),
+            "compliance": (sample_case.compliance_response_text(),),
+        }
+
+    scores = run_and_score(tmp_path, condition_ids=("A1V0",), behaviour=without_tools)
+    assert all(row.completed and not row.protocol_failure for row in scores.rows)
+    assert all(row.manager_verification_satisfied for row in scores.rows)
+    assert all(row.manager_validation_pass is False for row in scores.rows)
+    assert all(row.verification_failures == () for row in scores.rows)
+    assert all("target_not_searched" in row.verification_audit_failures for row in scores.rows)
+
+    from pilot01.experiment.summary import summarise
+
+    condition = summarise(scores).condition("A1V0")
+    assert condition.manager_validation_pass.numerator == 0
+    assert condition.manager_validation_pass.denominator == len(scores.rows)
+    assert condition.manager_verification_satisfied.numerator == len(scores.rows)
 
 
 # --------------------------------------------------------------------------
