@@ -55,7 +55,19 @@ __all__ = [
     "derive_basis",
 ]
 
-VALIDATOR_VERSION = "validator_v2"
+VALIDATOR_VERSION = "validator_v2_1"
+
+_TEXT_PARAGRAPH_ID = re.compile(r"(?<![a-zA-Z0-9_])[0-9a-f]{12}:p[0-9]{4}(?![a-zA-Z0-9_])")
+_SHORT_PARAGRAPH_ID = re.compile(r"(?<![a-zA-Z0-9_:])p[0-9]{4}(?![a-zA-Z0-9_])")
+
+
+def _paragraph_references(text: str, document: ContractDocument | None) -> tuple[str, ...]:
+    """Extract explicit IDs, including local pNNNN shorthand; never infer meaning."""
+    references = [match.group() for match in _TEXT_PARAGRAPH_ID.finditer(text)]
+    if document is not None:
+        key = document.text_hash.removeprefix("sha256:")[:12]
+        references.extend(f"{key}:{match.group()}" for match in _SHORT_PARAGRAPH_ID.finditer(text))
+    return tuple(sorted(set(references)))
 
 #: How a derived basis reads as a verdict. The mapping is total over
 #: ``VerificationBasis``, so a node's status is a function of what it did.
@@ -93,6 +105,9 @@ class VerificationFailure(str, Enum):
 
     EVIDENCE_NOT_OBSERVED = "evidence_not_observed"
     """A reported id is neither a paragraph of this contract nor upstream-cited."""
+
+    NARRATIVE_REFERENCE_NOT_REGISTERED = "narrative_reference_not_registered"
+    """An explicit reason-summary paragraph reference is absent from provenance."""
 
     BASIS_NOT_SELF_CHECKED = "basis_not_self_checked"
     """The node's declared ``verification_basis`` is not ``self_checked``.
@@ -196,6 +211,9 @@ class VerificationOutcome(BaseModel):
     target_search_audit: tuple[TargetSearchAudit, ...] = ()
     citation_audit: tuple[CitationAudit, ...] = ()
     actual_opened_paragraph_ids: tuple[str, ...] = ()
+    reason_paragraph_ids: tuple[str, ...] = ()
+    unregistered_reason_paragraph_ids: tuple[str, ...] = ()
+    uncertainty_paragraph_ids: tuple[str, ...] = ()
 
     @property
     def satisfied(self) -> bool:
@@ -350,6 +368,16 @@ def evaluate_verification(
     reported = tuple(provenance.opened_paragraph_ids) + tuple(
         provenance.inherited_source_ids
     )
+    reason_ids = _paragraph_references(output.reason_summary, document)
+    uncertainty_ids = tuple(sorted({
+        reference for note in output.uncertainties
+        for reference in _paragraph_references(note, document)
+    }))
+    unregistered_reason_ids = tuple(reference for reference in reason_ids if reference not in reported)
+    # All explicit IDs in the decision explanation are evidence references by
+    # protocol. Uncertainty-only mentions are recorded separately, not inferred
+    # to be adopted evidence. No natural-language negation heuristic is used.
+    adopted = tuple(dict.fromkeys((*reported, *reason_ids)))
     declared = provenance.verification_basis
     derived = derive_basis(ledger=ledger, source_tools_available=source_tools_available)
     observed = ledger.observed_ids
@@ -372,13 +400,13 @@ def evaluate_verification(
             invocation=invocation,
         )
 
-    unopened = [e for e in reported if ledger.classify(e) is not EvidenceClass.SELF_OPENED]
+    unopened = [e for e in adopted if ledger.classify(e) is not EvidenceClass.SELF_OPENED]
     foreign = [
         e
-        for e in reported
+        for e in adopted
         if is_paragraph_id(e) and (document is None or document.paragraph(e) is None)
     ]
-    unseen = [e for e in reported if e not in observed]
+    unseen = [e for e in adopted if e not in observed]
     checked = ledger.used_source_tools()
     def terms(value: str) -> tuple[str, ...]:
         return tuple(re.findall(r"[a-z0-9]+", value.casefold()))
@@ -415,6 +443,7 @@ def evaluate_verification(
         for reported_as, source_ids in (
             ("opened_paragraph_ids", provenance.opened_paragraph_ids),
             ("inherited_source_ids", provenance.inherited_source_ids),
+            ("reason_summary", reason_ids),
         )
         for source_id in source_ids
     )
@@ -450,6 +479,9 @@ def evaluate_verification(
             target_search_audit=target_audit,
             citation_audit=citation_audit,
             actual_opened_paragraph_ids=tuple(sorted(ledger.opened_ids)),
+            reason_paragraph_ids=reason_ids,
+            unregistered_reason_paragraph_ids=unregistered_reason_ids,
+            uncertainty_paragraph_ids=uncertainty_ids,
             **extra,
         )
 
@@ -457,6 +489,7 @@ def evaluate_verification(
         ("unopened", unopened),
         ("not_in_contract", foreign),
         ("unobserved", unseen),
+        ("reason_references_not_registered", unregistered_reason_ids),
     ):
         if ids:
             diagnostics.append(f"{label}=" + ",".join(ids))
@@ -478,7 +511,7 @@ def evaluate_verification(
     if not reported:
         failures.append(VerificationFailure.NO_EVIDENCE_CITED)
     elif (
-        len(unopened) == len(reported)
+        len(unopened) == len(adopted)
         or claimed_opened_but_not
         or any(item.paragraph_reference and not item.self_opened for item in citation_audit)
     ):
@@ -487,6 +520,8 @@ def evaluate_verification(
         failures.append(VerificationFailure.EVIDENCE_NOT_IN_CONTRACT)
     if unseen:
         failures.append(VerificationFailure.EVIDENCE_NOT_OBSERVED)
+    if unregistered_reason_ids:
+        failures.append(VerificationFailure.NARRATIVE_REFERENCE_NOT_REGISTERED)
     if declared is not VerificationBasis.SELF_CHECKED:
         failures.append(VerificationFailure.BASIS_NOT_SELF_CHECKED)
     if declared is not derived:

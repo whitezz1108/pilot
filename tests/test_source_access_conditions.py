@@ -920,6 +920,7 @@ def test_each_verification_failure_names_a_distinct_way_of_being_unbacked():
         "evidence_not_opened",
         "evidence_not_in_contract",
         "evidence_not_observed",
+        "narrative_reference_not_registered",
         "basis_not_self_checked",
         "check_incomplete",
         "status_not_verified",

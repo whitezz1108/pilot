@@ -1,5 +1,7 @@
 # Validator v2 实现与验证报告（2026-10-01）
 
+历史版本说明（2026-10-02）：本报告记录 v2 当时的结构化来源字段审计。随后在正文发现未登记的段落引用，因此这里的 8/8 程序通过不代表正文引用已完整覆盖。v2.1 已增加正文引用检查；旧 raw 和本报告的历史读数不回写。后续协议见 [validator_v21_protocol.md](validator_v21_protocol.md)。
+
 已在现有 Manager → Compliance track 接入确定性 validator 强化，不新增模型角色或修改轮次。设计与字段解释见 [validator_v2.md](validator_v2.md)。
 
 ## Git 备份和实现边界

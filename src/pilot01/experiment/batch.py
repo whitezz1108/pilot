@@ -52,7 +52,7 @@ from ..config import ConditionsConfig, ModelsConfig, WorkflowConfig
 from ..model import ModelCallLog, ModelClient, ScriptedModelClient
 from ..schemas import ErrorCondition
 from ..source.tools import ToolCallLog
-from ..source.verification import VerificationLog
+from ..source.verification import VALIDATOR_VERSION, VerificationLog
 from ..workflow.export import build_execution_record
 from ..workflow.nodes import build_llm_registry
 from ..workflow.runner import RunOutcome, WorkflowRunner
@@ -493,6 +493,7 @@ class ExperimentRunner:
         directory.write_events(execution)
 
         artifact = RunArtifact(
+            validator_version=VALIDATOR_VERSION,
             experiment_id=job.experiment_id,
             run_id=job.run_id,
             case_id=job.case_id,

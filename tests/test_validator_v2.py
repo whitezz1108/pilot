@@ -147,3 +147,101 @@ def test_runtime_records_audit_and_gates_before_applying_candidate(condition, no
     else:
         assert case.error is None
         assert getattr(state, f"{node}_output") is not None
+
+
+@pytest.mark.parametrize("required", [False, True])
+def test_unregistered_reason_reference_is_audited_and_must_be_opened(required):
+    ledger = complete_search_ledger()
+    output = sample_case.manager_output(
+        evidence_ids=(TARGET_PARAGRAPH,), verification_status=VerificationStatus.VERIFIED,
+        reason_summary=f"The clause assessment uses {GOVERNING_LAW_PARAGRAPH}.",
+    )
+    result = evaluate_verification(
+        output=output, policy=sample_case.build_policy(), ledger=ledger,
+        document=sample_case.build_contract_document(), verification_required=required,
+        source_tools_available=True,
+    )
+    assert result.reason_paragraph_ids == (GOVERNING_LAW_PARAGRAPH,)
+    assert result.unregistered_reason_paragraph_ids == (GOVERNING_LAW_PARAGRAPH,)
+    assert VerificationFailure.NARRATIVE_REFERENCE_NOT_REGISTERED in result.audit_failures
+    assert VerificationFailure.EVIDENCE_NOT_OPENED in result.audit_failures
+    assert result.satisfied is (not required)
+    assert result.citation_audit[-1].reported_as == "reason_summary"
+
+
+def test_opened_but_unregistered_reason_reference_still_fails_consistency():
+    ledger = complete_search_ledger()
+    ledger.record_open(GOVERNING_LAW_PARAGRAPH)
+    output = sample_case.manager_output(
+        evidence_ids=(TARGET_PARAGRAPH,), verification_status=VerificationStatus.VERIFIED,
+        reason_summary=f"Uses {GOVERNING_LAW_PARAGRAPH} and its local shorthand "
+                       f"{GOVERNING_LAW_PARAGRAPH.split(':')[1]}.",
+    )
+    result = evaluate_verification(
+        output=output, policy=sample_case.build_policy(), ledger=ledger,
+        document=sample_case.build_contract_document(), verification_required=True,
+        source_tools_available=True,
+    )
+    assert result.reason_paragraph_ids == (GOVERNING_LAW_PARAGRAPH,)
+    assert result.failures == (VerificationFailure.NARRATIVE_REFERENCE_NOT_REGISTERED,)
+
+
+def test_registered_opened_reason_references_pass_with_uncertainty_only_unopened_mention():
+    ledger = complete_search_ledger()
+    short = GOVERNING_LAW_PARAGRAPH.split(':')[1]
+    output = sample_case.manager_output(
+        evidence_ids=(TARGET_PARAGRAPH,), verification_status=VerificationStatus.VERIFIED,
+        reason_summary=f"Assessment uses {TARGET_PARAGRAPH}.",
+        uncertainties=(f"I did not open {short}; it is not evidence for my assessment.",),
+    )
+    result = evaluate_verification(
+        output=output, policy=sample_case.build_policy(), ledger=ledger,
+        document=sample_case.build_contract_document(), verification_required=True,
+        source_tools_available=True,
+    )
+    assert result.validation_pass is True
+    assert result.uncertainty_paragraph_ids == (GOVERNING_LAW_PARAGRAPH,)
+    assert result.unregistered_reason_paragraph_ids == ()
+
+
+def test_foreign_reason_id_is_rejected_and_shorthand_does_not_resolve_it_locally():
+    ledger = complete_search_ledger()
+    foreign = "0123456789ab:p0001"
+    output = sample_case.manager_output(
+        evidence_ids=(TARGET_PARAGRAPH,), verification_status=VerificationStatus.VERIFIED,
+        reason_summary=f"Assessment uses [{foreign}].",
+    )
+    result = evaluate_verification(
+        output=output, policy=sample_case.build_policy(), ledger=ledger,
+        document=sample_case.build_contract_document(), verification_required=True,
+        source_tools_available=True,
+    )
+    assert result.reason_paragraph_ids == (foreign,)
+    assert VerificationFailure.EVIDENCE_NOT_IN_CONTRACT in result.failures
+    assert VerificationFailure.EVIDENCE_NOT_OBSERVED in result.failures
+
+
+@pytest.mark.parametrize("condition", ["A1V0", "A1V1"])
+@pytest.mark.parametrize("node", ["manager", "compliance"])
+def test_runtime_gates_narrative_reference_before_applying_output(condition, node):
+    answer = verifying_answer if node == "manager" else verifying_compliance_answer
+    narrative = (
+        search(), search("assignment"), open_span(),
+        answer(reason_summary=f"Assessment also uses {GOVERNING_LAW_PARAGRAPH}."),
+    )
+    case = Case(
+        condition_id=condition,
+        manager_responses=narrative if node == "manager" else (
+            search(), search("assignment"), open_span(), verifying_answer()
+        ),
+        compliance_responses=narrative if node == "compliance" else (
+            search(), search("assignment"), open_span(), verifying_compliance_answer()
+        ),
+    )
+    state = case.run()
+    assert VerificationFailure.NARRATIVE_REFERENCE_NOT_REGISTERED in case.verdicts(node)[0].audit_failures
+    assert (getattr(state, f"{node}_output") is None) is (condition == "A1V1")
+    # Candidate remains in the model log even when the workflow rejects it.
+    assert any(record.parsed_output and GOVERNING_LAW_PARAGRAPH in
+               record.parsed_output.get("reason_summary", "")
+               for record in case.call_log.records if record.role == node)

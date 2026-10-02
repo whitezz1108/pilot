@@ -699,7 +699,7 @@ def test_verification_is_reported_per_node_and_per_condition(tmp_path):
     assert required.verification_failures == ()
     assert required.manager_validation_pass is True
     assert required.compliance_validation_pass is True
-    assert required.validator_versions == ("validator_v2",)
+    assert required.validator_versions == ("validator_v2_1",)
 
     assert optional.manager_verification_required is False
     assert optional.manager_verification_checked is True

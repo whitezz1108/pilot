@@ -1107,7 +1107,7 @@ def score_run(
         validator_versions=tuple(sorted({
             outcome.validator_version for outcome in raw.verifications
             if outcome.validator_version is not None
-        })),
+        } | ({raw.artifact.validator_version} if raw.artifact.validator_version else set()))),
         verification_audit_failures=tuple(sorted({
             failure.value for outcome in raw.verifications for failure in outcome.audit_failures
         })),

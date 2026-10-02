@@ -232,6 +232,8 @@ class RunArtifact(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     artifact_version: str = ARTIFACT_VERSION
+    validator_version: str | None = None
+    """Runtime gate version, also retained when parsing fails before any audit."""
 
     experiment_id: str
     run_id: str
