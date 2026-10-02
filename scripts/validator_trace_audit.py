@@ -102,6 +102,8 @@ def audit_runs(registry: CaseRegistry, raw_root: Path) -> dict:
                                              f"{recorded.node}_output") is not None,
                 "recorded_validator_version": recorded.validator_version,
                 "recorded_validation_pass": recorded.validation_pass,
+                "recorded_gate_satisfied": recorded.satisfied,
+                "recorded_gate_failures": [failure.value for failure in recorded.failures],
                 "current_replay_matches_runtime": True if current_record else None,
                 "replayed_outcome": replayed.model_dump(mode="json"),
                 "gold_paragraph_ids_offline_only": sorted(gold_paragraphs),
