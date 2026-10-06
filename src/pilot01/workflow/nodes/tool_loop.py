@@ -79,12 +79,13 @@ __all__ = [
     "run_tool_loop",
 ]
 
-MAX_TOOL_ROUNDS = 4
-"""Tool requests permitted per node invocation. A fifth aborts the run.
+MAX_TOOL_ROUNDS = 16
+"""Tool requests permitted per node invocation. A seventeenth aborts the run.
 
-Chosen to be comfortably more than a realistic search-open-recheck sequence
-needs, and small enough that a model stuck in a request loop cannot spend
-without bound. It bounds *tool requests*, not turns: after the last permitted
+Raised from four for the separately frozen 2026-10-06 budget experiment;
+historical experiments retain their recorded four-request budget. Search and
+open share this ceiling, including failed requests. It bounds *tool requests*,
+not turns: after the last permitted
 request the model still gets a turn to answer, which is why the check fires
 before dispatch rather than after. What the prompt advertises ("at most
 ``MAX_TOOL_ROUNDS`` tools") is therefore exactly what the runtime allows.

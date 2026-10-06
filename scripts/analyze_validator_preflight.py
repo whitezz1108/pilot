@@ -7,6 +7,7 @@ from collections import Counter
 import hashlib
 import json
 from pathlib import Path
+import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -25,11 +26,28 @@ def ratio(success: int, total: int) -> dict:
             "value": None if not total else round(success / total, 6)}
 
 
+def classify_failure(row, artifact):
+    if not row.protocol_failure:
+        return None
+    error = artifact.failure.error or ""
+    if re.search(r"requested more than \d+ tool\(s\)", error):
+        return "tool_budget_exhausted"
+    if "finish_reason='length'" in error:
+        return "output_token_limit"
+    if row.verification_failure:
+        return "validator_rejected"
+    if row.model_output_failure:
+        return "model_or_output_failure"
+    return "other_protocol_failure"
+
+
 def analyze(root: Path, experiment_id: str, registry_path: Path) -> dict:
     paths = ExperimentPaths(root=root, experiment_id=experiment_id)
     registry = CaseRegistry.load_json(registry_path)
     plan = RunPlan.load_json(paths.run_plan_json)
     manifest = json.loads((root / "validator_manifest.json").read_text(encoding="utf-8"))
+    # Older frozen manifests used four requests and have no explicit budget field.
+    tool_budget = manifest.get("max_tool_rounds", 4)
     unchanged = all(Path(path).is_file() and hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest
                     for path, digest in manifest["sha256"].items())
     if not unchanged:
@@ -46,18 +64,7 @@ def analyze(root: Path, experiment_id: str, registry_path: Path) -> dict:
     scores = score_experiment(paths.raw_dir, registry=registry)
     raw_by_id = {run.run_id: run for run in raw}
     def failure_kind(row):
-        if not row.protocol_failure:
-            return None
-        error = raw_by_id[row.run_id].artifact.failure.error or ""
-        if "more than 4 tool" in error:
-            return "tool_budget_exhausted"
-        if "finish_reason='length'" in error:
-            return "output_token_limit"
-        if row.verification_failure:
-            return "validator_rejected"
-        if row.model_output_failure:
-            return "model_or_output_failure"
-        return "other_protocol_failure"
+        return classify_failure(row, raw_by_id[row.run_id].artifact)
     scores.write_jsonl(paths.run_scores_jsonl)
     scores.write_csv(paths.run_scores_csv)
     summary = summarise(scores, plan=plan, registry=registry)
@@ -92,12 +99,16 @@ def analyze(root: Path, experiment_id: str, registry_path: Path) -> dict:
                         and row["recorded_validation_pass"] is False and row["candidate_applied"]]
     tool_counts = Counter((run.run_id, call.node, call.invocation)
                           for run in raw for call in run.tool_calls if call.ok)
+    request_counts = Counter((run.run_id, call.node, call.invocation)
+                             for run in raw for call in run.tool_calls)
     qc = {
         "plan_matches_raw": True, "frozen_hashes_unchanged": unchanged,
         "a0_successful_source_calls": a0_success,
         "runtime_replay_agreement": all(row["current_replay_matches_runtime"] is True for row in replay["nodes"]),
         "rejected_a1v1_candidates_applied": len(rejected_applied),
         "max_successful_tools_per_node_invocation": max(tool_counts.values(), default=0),
+        "max_dispatched_tools_per_node_invocation": max(request_counts.values(), default=0),
+        "max_tool_rounds": tool_budget,
         "all_run_versions_match": all(run.artifact.validator_version == manifest["validator_version"] for run in raw),
         "planned": len(plan.jobs), "attempted": len(raw),
         "completed": sum(run.artifact.completed for run in raw),
@@ -108,10 +119,11 @@ def analyze(root: Path, experiment_id: str, registry_path: Path) -> dict:
     }
     qc["protocol_invariants_pass"] = (
         a0_success == 0 and not rejected_applied and qc["runtime_replay_agreement"]
-        and qc["max_successful_tools_per_node_invocation"] <= 4 and qc["all_run_versions_match"]
+        and qc["max_dispatched_tools_per_node_invocation"] <= tool_budget and qc["all_run_versions_match"]
     )
     payload = {"experiment_id": experiment_id, "validator_version": manifest["validator_version"],
                "implementation_commit": manifest["implementation_commit"],
+               "max_tool_rounds": tool_budget,
                "qc": qc, "conditions": conditions,
                "node_diagnosis_counts": replay["counts"]["diagnoses"],
                "boundary": "Purposive six-case preflight, one repeat per cell; no population or causal effect claim. "
@@ -123,7 +135,8 @@ def analyze(root: Path, experiment_id: str, registry_path: Path) -> dict:
     (root / "raw_sha256.json").write_text(json.dumps(raw_hashes, indent=2) + "\n", encoding="utf-8")
     def fmt(rate):
         return f"{rate['numerator']}/{rate['denominator']}" if rate["denominator"] else "不适用 / 未到达"
-    lines = ["# Validator v2.1 预实验结果（2026-10-02）", "",
+    lines = [f"# Validator v2.1 预实验结果（{manifest.get('client_date', '2026-10-02')}）", "",
+             f"实验 ID：`{experiment_id}`；每节点工具预算：{tool_budget} 次（搜索和打开共用）。",
              f"计划 {qc['planned']}，尝试 {qc['attempted']}，完成 {qc['completed']}，失败 {qc['failed']}。",
              f"模型调用 {qc['model_calls']}，工具调用 {qc['tool_calls']}。程序不变量检查：{qc['protocol_invariants_pass']}。", "",
              "| 条件 | 完成 / 计划 | 最终动作正确 / 已答 | 正确动作交付 / 计划 | E1 证据恢复 / 完成 | E1 证据恢复交付 / 计划 | Manager 完整核验 | Compliance 完整核验 |",
@@ -152,7 +165,7 @@ def analyze(root: Path, experiment_id: str, registry_path: Path) -> dict:
               "失败不是已答错误：已答正确率保留可测量分母，同时用所有计划运行报告成功交付。",
               "E1 恢复统计沿用冻结的 evidence-supported recovery 指标；段落重叠不是人工语义蕴含。",
               "这六个案例按类型与长度目的性选取，每格一次，不能据此宣称稳定的因果增益。",
-              "未自动重跑失败结果；未调参或增加工具预算。", "",
+              "未自动重跑失败结果；本批次运行期间配置保持冻结，预算以本轮 manifest 为准。", "",
               f"冻结实现：`{manifest['implementation_commit']}`。原始输出根目录：`{root}`。"]
     (root / "preflight_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return payload

@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import pytest
 import fixture_registry as fixture
@@ -63,3 +64,26 @@ def test_incomplete_tree_is_rejected_before_reporting(tmp_path):
     first.unlink()  # Synthetic test directory only.
     with pytest.raises(ValueError, match="Incomplete raw tree"):
         analyzer().analyze(tmp_path, paths.experiment_id, registry_path)
+
+
+@pytest.mark.parametrize("budget", [4, 16])
+def test_tool_budget_failure_classification_is_independent_of_budget(budget):
+    row = SimpleNamespace(protocol_failure=True, verification_failure=False,
+                          model_output_failure=False)
+    artifact = SimpleNamespace(failure=SimpleNamespace(error=(
+        f"manager requested more than {budget} tool(s) without producing a final answer; "
+        f"the limit is {budget}.")))
+    assert analyzer().classify_failure(row, artifact) == "tool_budget_exhausted"
+
+
+def test_explicit_sixteen_request_budget_is_reported(tmp_path):
+    paths, registry_path = setup_run(tmp_path)
+    manifest_path = tmp_path / "validator_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.update(max_tool_rounds=16, client_date="2026-10-06")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    result = analyzer().analyze(tmp_path, paths.experiment_id, registry_path)
+    assert result["qc"]["max_tool_rounds"] == result["max_tool_rounds"] == 16
+    assert result["qc"]["protocol_invariants_pass"]
+    report = (tmp_path / "preflight_report.md").read_text(encoding="utf-8")
+    assert "2026-10-06" in report and "工具预算：16" in report
