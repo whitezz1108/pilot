@@ -1,4 +1,6 @@
 # Native tool-call transport for the isolated SGLang validation endpoint.
+# The endpoint must explicitly use --reasoning-parser qwen3 and
+# --tool-call-parser qwen3_coder; do not rely on template auto-detection.
 max_parallel_runs: 1
 http_retries: 0
 recovery_successes: 20

@@ -40,3 +40,20 @@ The native path is deliberately incompatible with the retired
 `PILOT01_STRICT_TOOL_PROTOCOL` text grammar. If that environment variable is
 still enabled, request construction fails before a model call instead of
 silently combining two decoding mechanisms.
+
+## SGLang endpoint requirement
+
+The Qwen3.8 tokenizer template renders provider tools as
+`<tool_call><function=...>` blocks. The isolated SGLang endpoint must therefore
+set both parsers explicitly:
+
+```text
+--reasoning-parser qwen3
+--tool-call-parser qwen3_coder
+```
+
+This pairing was checked offline against the installed SGLang 0.5.22 detector:
+the model template exposes the tool schema, and `qwen3_coder` recovers the
+function name and arguments from the generated tool block. Explicit launch
+arguments are still required; auto-detection is not treated as a frozen
+experiment setting.
