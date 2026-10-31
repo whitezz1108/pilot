@@ -95,6 +95,7 @@ def test_native_wire_carries_closed_tool_schemas_without_json_response_mode():
         "search_contract",
         "open_source_span",
     ]
+    assert all(tool["function"]["strict"] is True for tool in payload["tools"])
     assert all(
         tool["function"]["parameters"]["additionalProperties"] is False
         for tool in payload["tools"]

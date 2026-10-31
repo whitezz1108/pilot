@@ -46,6 +46,7 @@ class ToolDefinition(BaseModel):
             "function": {
                 "name": self.name,
                 "description": self.description,
+                "strict": True,
                 "parameters": self.input_schema,
             },
         }
