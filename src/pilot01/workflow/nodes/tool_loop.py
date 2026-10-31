@@ -334,7 +334,22 @@ def run_tool_loop(
             call_log.append(record)
 
     while True:
-        request = build_request(tuple(messages))
+        request_messages = tuple(messages)
+        final_only = tool_transport == "native" and rounds >= max_tool_rounds
+        if final_only:
+            request_messages += (
+                ModelMessage(
+                    role="user",
+                    content=(
+                        "The source-tool budget is exhausted. No more tools are available. "
+                        "Submit the final answer now using only evidence already returned; "
+                        "mark any unresolved policy target as unknown."
+                    ),
+                ),
+            )
+        request = build_request(request_messages)
+        if final_only:
+            request = request.model_copy(update={"tools": (), "tool_choice": None})
         if audit is not None:
             audit(request)
 

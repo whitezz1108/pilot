@@ -495,6 +495,45 @@ def test_multi_call_turn_is_rejected_atomically_when_budget_is_too_small():
     assert not tools.log.records
 
 
+def test_native_loop_switches_to_final_only_after_budget_is_exhausted():
+    tools = SourceTools(node="manager", library=sample_case.build_source_library())
+    tools.begin_invocation(contract_id=sample_case.CONTRACT_ID, available=True)
+    call = native_call(call_id="call-last", arguments={"query": "control"})
+    client = ScriptedModelClient(
+        (call, sample_case.manager_response_text()),
+        tool_transport="native",
+    )
+
+    def build_request(messages):
+        return ModelRequest(
+            messages=messages,
+            tools=tools.tool_definitions,
+            tool_choice="auto",
+            params=PARAMS,
+            role="manager",
+            prompt_version="manager-native-v1",
+        )
+
+    result = run_tool_loop(
+        client=client,
+        build_request=build_request,
+        initial_messages=(ModelMessage(role="user", content="Assess."),),
+        output_model=ManagerOutput,
+        repair=None,
+        call_log=None,
+        expected_role="manager",
+        tools=tools,
+        tool_transport="native",
+        max_tool_rounds=1,
+    )
+    assert result.rounds == 1
+    final_request = client.requests[1]
+    assert final_request.tools == ()
+    assert final_request.tool_choice is None
+    assert "tool budget is exhausted" in final_request.messages[-1].content.lower()
+    assert "unknown" in final_request.messages[-1].content.lower()
+
+
 def test_native_text_tool_request_null_fails_without_repair_or_dispatch():
     tools = SourceTools(node="manager", library=sample_case.build_source_library())
     tools.begin_invocation(contract_id=sample_case.CONTRACT_ID, available=True)
