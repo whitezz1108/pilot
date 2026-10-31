@@ -81,17 +81,47 @@ class ModelParams(BaseModel):
     max_output_tokens: int = Field(gt=0)
     top_p: float | None = Field(default=None, gt=0.0, le=1.0)
     """Sent only when set; ``None`` means "provider default", not 1.0."""
+    top_k: int | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
+    min_p: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        exclude_if=lambda value: value is None,
+    )
+    presence_penalty: float | None = Field(
+        default=None,
+        ge=-2.0,
+        le=2.0,
+        exclude_if=lambda value: value is None,
+    )
+    repetition_penalty: float | None = Field(
+        default=None,
+        gt=0.0,
+        exclude_if=lambda value: value is None,
+    )
+    seed: int | None = Field(default=None, ge=0, exclude_if=lambda value: value is None)
     timeout_seconds: float = Field(default=60.0, gt=0.0)
     reasoning_effort: str | None = Field(default=None, min_length=1)
 
     def fingerprint(self) -> str:
         """A stable one-line identity for this parameter set."""
         top_p = "default" if self.top_p is None else f"{self.top_p:g}"
-        return (
+        fingerprint = (
             f"{self.provider}:{self.model_id}"
             f"/T={self.temperature:g}/top_p={top_p}/max={self.max_output_tokens}"
             + (f"/reasoning={self.reasoning_effort}" if self.reasoning_effort is not None else "")
         )
+        for name in (
+            "top_k",
+            "min_p",
+            "presence_penalty",
+            "repetition_penalty",
+            "seed",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                fingerprint += f"/{name}={value:g}"
+        return fingerprint
 
 
 class PreparationModelParams(ModelParams):
@@ -107,7 +137,18 @@ class PreparationModelParams(ModelParams):
         if self.max_output_tokens is not None:
             return super().fingerprint()
         top_p = "default" if self.top_p is None else f"{self.top_p:g}"
-        return f"{self.provider}:{self.model_id}/T={self.temperature:g}/top_p={top_p}/max=provider-default"
+        fingerprint = f"{self.provider}:{self.model_id}/T={self.temperature:g}/top_p={top_p}/max=provider-default"
+        for name in (
+            "top_k",
+            "min_p",
+            "presence_penalty",
+            "repetition_penalty",
+            "seed",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                fingerprint += f"/{name}={value:g}"
+        return fingerprint
 
 
 class ModelMessage(BaseModel):

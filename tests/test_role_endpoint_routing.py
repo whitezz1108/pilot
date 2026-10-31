@@ -90,6 +90,10 @@ def test_native_tool_profile_and_endpoint_are_explicit(tmp_path, monkeypatch):
     assert profile.models.for_role("manager").reasoning_effort == "xhigh"
     assert profile.models.for_role("manager").temperature == 1.0
     assert profile.models.for_role("manager").top_p == 0.95
+    assert profile.models.for_role("manager").top_k == 20
+    assert profile.models.for_role("manager").min_p == 0.0
+    assert profile.models.for_role("manager").presence_penalty == 0.0
+    assert profile.models.for_role("manager").repetition_penalty == 1.0
     assert profile.models.models_version == "bf16-mtp-xhigh-native-tools-20261101"
     assert settings.max_parallel_runs == 1
     assert settings.http_retries == 0

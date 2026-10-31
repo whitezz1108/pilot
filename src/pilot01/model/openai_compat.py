@@ -203,6 +203,16 @@ class OpenAICompatibleClient:
             payload["reasoning_effort"] = params.reasoning_effort
         if params.top_p is not None:
             payload["top_p"] = params.top_p
+        for name in (
+            "top_k",
+            "min_p",
+            "presence_penalty",
+            "repetition_penalty",
+            "seed",
+        ):
+            value = getattr(params, name)
+            if value is not None:
+                payload[name] = value
         strict_tool_protocol = os.environ.get("PILOT01_STRICT_TOOL_PROTOCOL") == "1"
         if request.tools:
             if self._tool_transport != "native":

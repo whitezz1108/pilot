@@ -35,6 +35,21 @@ PARAMS = ModelParams(
     max_output_tokens=512,
 )
 
+SAMPLING_PARAMS = ModelParams(
+    provider="openai-compatible",
+    model_id="scripted-native",
+    temperature=1.0,
+    max_output_tokens=32768,
+    top_p=0.95,
+    top_k=20,
+    min_p=0.0,
+    presence_penalty=0.0,
+    repetition_penalty=1.0,
+    seed=202,
+    timeout_seconds=360.0,
+    reasoning_effort="xhigh",
+)
+
 
 def native_call(name="search_contract", arguments=None, call_id="call-search-1"):
     return ModelToolCall(
@@ -84,6 +99,55 @@ def test_native_wire_carries_closed_tool_schemas_without_json_response_mode():
         tool["function"]["parameters"]["additionalProperties"] is False
         for tool in payload["tools"]
     )
+
+
+def test_full_sampling_policy_is_sent_and_fingerprinted():
+    request = ModelRequest(
+        messages=(ModelMessage(role="user", content="Assess."),),
+        params=SAMPLING_PARAMS,
+        role="manager",
+        prompt_version="sampling-native-v1",
+    )
+    client = OpenAICompatibleClient(
+        base_url="https://offline.invalid/v1",
+        api_key="offline-placeholder",
+        tool_transport="native",
+        transport=lambda *_: b"",
+    )
+    payload = json.loads(client.build_request(request).data)
+    assert {
+        key: payload[key]
+        for key in (
+            "temperature",
+            "top_p",
+            "top_k",
+            "min_p",
+            "presence_penalty",
+            "repetition_penalty",
+            "seed",
+            "max_tokens",
+            "reasoning_effort",
+        )
+    } == {
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 0.0,
+        "repetition_penalty": 1.0,
+        "seed": 202,
+        "max_tokens": 32768,
+        "reasoning_effort": "xhigh",
+    }
+    fingerprint = SAMPLING_PARAMS.fingerprint()
+    for fragment in (
+        "top_k=20",
+        "min_p=0",
+        "presence_penalty=0",
+        "repetition_penalty=1",
+        "seed=202",
+    ):
+        assert fragment in fingerprint
 
 
 def test_native_tools_refuse_legacy_grammar_constraint(monkeypatch):
