@@ -22,6 +22,7 @@ from pilot01.schemas import ManagerOutput
 from pilot01.source import SourceToolError, SourceTools
 from pilot01.source.pagination import NEXT_SEARCH_PAGE, PagedSourceTools
 from pilot01.workflow.nodes.agent_protocol import (
+    ToolCallDecision,
     ToolProtocolViolation,
     decide_agent_response,
 )
@@ -89,7 +90,7 @@ def test_native_wire_carries_closed_tool_schemas_without_json_response_mode():
     )
     payload = json.loads(client.build_request(request).data)
     assert payload["tool_choice"] == "auto"
-    assert payload["parallel_tool_calls"] is False
+    assert payload["parallel_tool_calls"] is True
     assert "response_format" not in payload and "ebnf" not in payload
     assert [tool["function"]["name"] for tool in payload["tools"]] == [
         "search_contract",
@@ -231,12 +232,11 @@ def test_mixed_content_and_tool_call_is_a_protocol_violation():
         )
 
 
-def test_multiple_native_calls_are_rejected_by_sequential_state_machine():
-    with pytest.raises(ToolProtocolViolation, match="exactly one tool call"):
-        decide_agent_response(
-            response(calls=(native_call(call_id="one"), native_call(call_id="two"))),
-            transport="native",
-        )
+def test_multiple_native_calls_are_one_typed_tool_decision():
+    calls = (native_call(call_id="one"), native_call(call_id="two"))
+    decision = decide_agent_response(response(calls=calls), transport="native")
+    assert isinstance(decision, ToolCallDecision)
+    assert decision.calls == calls
 
 
 def test_finish_reason_cannot_claim_a_missing_tool_call():
@@ -301,6 +301,104 @@ def test_native_loop_links_assistant_call_tool_result_and_tool_log():
     assert json.loads(follow_up[-1].content)["status"] == "ok"
     assert log.records[0].tool_call_id == call.call_id
     assert tools.log.records[0].tool_call_id == call.call_id
+
+
+def test_native_loop_executes_multiple_read_only_calls_in_provider_order():
+    tools = SourceTools(node="manager", library=sample_case.build_source_library())
+    tools.begin_invocation(
+        contract_id=sample_case.CONTRACT_ID,
+        available=True,
+        run_id="run-native-multi",
+    )
+    calls = (
+        native_call(
+            call_id="call-control",
+            arguments={"query": "change of control"},
+        ),
+        native_call(
+            call_id="call-termination",
+            arguments={"query": "termination"},
+        ),
+    )
+    client = ScriptedModelClient(
+        (calls, sample_case.manager_response_text()),
+        tool_transport="native",
+    )
+    log = ModelCallLog()
+
+    def build_request(messages):
+        return ModelRequest(
+            messages=messages,
+            tools=tools.tool_definitions,
+            tool_choice="auto",
+            params=PARAMS,
+            role="manager",
+            prompt_version="manager-native-v1",
+            run_id="run-native-multi",
+        )
+
+    result = run_tool_loop(
+        client=client,
+        build_request=build_request,
+        initial_messages=(ModelMessage(role="user", content="Assess."),),
+        output_model=ManagerOutput,
+        repair=None,
+        call_log=log,
+        expected_role="manager",
+        tools=tools,
+        tool_transport="native",
+    )
+    assert result.rounds == 2
+    follow_up = client.requests[1].messages
+    assert follow_up[-3].role == "assistant"
+    assert follow_up[-3].tool_calls == calls
+    assert [message.tool_call_id for message in follow_up[-2:]] == [
+        "call-control",
+        "call-termination",
+    ]
+    assert [record.tool_call_id for record in tools.log.records] == [
+        "call-control",
+        "call-termination",
+    ]
+    assert [call["call_id"] for call in log.records[0].tool_request["calls"]] == [
+        "call-control",
+        "call-termination",
+    ]
+
+
+def test_multi_call_turn_is_rejected_atomically_when_budget_is_too_small():
+    tools = SourceTools(node="manager", library=sample_case.build_source_library())
+    tools.begin_invocation(contract_id=sample_case.CONTRACT_ID, available=True)
+    calls = (
+        native_call(call_id="call-one", arguments={"query": "control"}),
+        native_call(call_id="call-two", arguments={"query": "termination"}),
+    )
+    client = ScriptedModelClient((calls,), tool_transport="native")
+
+    def build_request(messages):
+        return ModelRequest(
+            messages=messages,
+            tools=tools.tool_definitions,
+            tool_choice="auto",
+            params=PARAMS,
+            role="manager",
+            prompt_version="manager-native-v1",
+        )
+
+    with pytest.raises(ToolLoopError, match="No tool from this response was executed"):
+        run_tool_loop(
+            client=client,
+            build_request=build_request,
+            initial_messages=(ModelMessage(role="user", content="Assess."),),
+            output_model=ManagerOutput,
+            repair=None,
+            call_log=None,
+            expected_role="manager",
+            tools=tools,
+            tool_transport="native",
+            max_tool_rounds=1,
+        )
+    assert not tools.log.records
 
 
 def test_native_text_tool_request_null_fails_without_repair_or_dispatch():

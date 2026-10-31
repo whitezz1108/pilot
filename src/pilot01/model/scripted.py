@@ -37,6 +37,8 @@ from .tool_protocol import ToolTransport
 
 __all__ = ["ScriptedModelClient"]
 
+ScriptedOutput = str | ModelToolCall | tuple[ModelToolCall, ...]
+
 
 def _fixed_step_clock(start: datetime, step_seconds: float = 0.5) -> Callable[[], datetime]:
     """A clock that advances by a fixed step on every call.
@@ -59,7 +61,7 @@ class ScriptedModelClient:
 
     def __init__(
         self,
-        outputs: Sequence[str | ModelToolCall],
+        outputs: Sequence[ScriptedOutput],
         *,
         clock: Callable[[], datetime] | None = None,
         repeat_last: bool = False,
@@ -74,6 +76,13 @@ class ScriptedModelClient:
                 "a scripted model client must declare at least one response; an "
                 "empty script would silently produce a call with no answer"
             )
+        for output in outputs:
+            if isinstance(output, tuple) and (
+                not output or not all(isinstance(call, ModelToolCall) for call in output)
+            ):
+                raise ValueError(
+                    "a scripted native tool response must be a non-empty tuple of ModelToolCall"
+                )
         self._outputs = tuple(outputs)
         self._repeat_last = repeat_last
         self._usage = usage
@@ -104,7 +113,7 @@ class ScriptedModelClient:
         return len(self._requests)
 
     @property
-    def outputs(self) -> tuple[str | ModelToolCall, ...]:
+    def outputs(self) -> tuple[ScriptedOutput, ...]:
         return self._outputs
 
     @property
@@ -135,7 +144,9 @@ class ScriptedModelClient:
         requested_at = self._clock()
         responded_at = self._clock()
         text = output if isinstance(output, str) else ""
-        tool_calls = () if isinstance(output, str) else (output,)
+        tool_calls = () if isinstance(output, str) else (
+            output if isinstance(output, tuple) else (output,)
+        )
         response = ModelResponse(
             text=text,
             provider=self._provider_override or request.params.provider,

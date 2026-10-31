@@ -29,7 +29,7 @@ class ToolCallDecision(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     kind: Literal["tool_call"] = "tool_call"
-    call: ModelToolCall
+    calls: tuple[ModelToolCall, ...]
 
 
 class FinalSubmissionDecision(BaseModel):
@@ -59,10 +59,11 @@ def decide_agent_response(
     """Resolve one response into exactly one orchestration decision.
 
     Native mode is intentionally strict: the provider's structured tool-call
-    channel and normal assistant content are mutually exclusive, and this
-    workflow executes one call at a time.  A legacy ``tool_request`` object in
-    normal content is a protocol violation, not a final answer and not a target
-    for format repair.
+    channel and normal assistant content are mutually exclusive.  One native
+    response may contain several calls; the tool loop executes and records them
+    in provider order before the next model turn.  A legacy ``tool_request``
+    object in normal content is a protocol violation, not a final answer and
+    not a target for format repair.
     """
     calls = response.tool_calls
     visible = response.text.strip()
@@ -75,11 +76,7 @@ def decide_agent_response(
             raise ToolProtocolViolation(
                 "assistant returned normal content and a tool call in the same turn"
             )
-        if len(calls) != 1:
-            raise ToolProtocolViolation(
-                f"this sequential workflow permits exactly one tool call per turn; got {len(calls)}"
-            )
-        return ToolCallDecision(call=calls[0])
+        return ToolCallDecision(calls=calls)
 
     if transport == "native" and _reserved_text_envelope(response.text):
         raise ToolProtocolViolation(

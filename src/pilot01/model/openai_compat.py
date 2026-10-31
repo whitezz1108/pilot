@@ -225,7 +225,7 @@ class OpenAICompatibleClient:
                 )
             payload["tools"] = [tool.openai_function() for tool in request.tools]
             payload["tool_choice"] = request.tool_choice or "auto"
-            payload["parallel_tool_calls"] = False
+            payload["parallel_tool_calls"] = True
         elif self._json_mode:
             if self._json_object_grammar is not None:
                 payload["ebnf"] = self._json_object_grammar

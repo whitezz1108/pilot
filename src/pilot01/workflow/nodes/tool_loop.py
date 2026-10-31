@@ -346,17 +346,23 @@ def run_tool_loop(
             emit(record_call(index=call_index, request=request, prompt_version=request.prompt_version,
                              attempt=0, is_repair=False, response=response, parse_error="output_truncated"))
             raise ModelOutputError(f"output limit ({request.params.max_output_tokens} tokens, finish_reason='length'); no repair attempted")
-        native_call: ModelToolCall | None = None
+        native_calls: tuple[ModelToolCall, ...] = ()
         if tool_transport == "native":
             try:
                 decision = decide_agent_response(response, transport=tool_transport)
-                if (
-                    isinstance(decision, ToolCallDecision)
-                    and decision.call.call_id in seen_tool_call_ids
-                ):
-                    raise ToolProtocolViolation(
-                        f"duplicate native tool call id: {decision.call.call_id}"
-                    )
+                if isinstance(decision, ToolCallDecision):
+                    response_ids = [call.call_id for call in decision.calls]
+                    duplicate_ids = {
+                        call_id
+                        for call_id in response_ids
+                        if response_ids.count(call_id) > 1
+                        or call_id in seen_tool_call_ids
+                    }
+                    if duplicate_ids:
+                        raise ToolProtocolViolation(
+                            "duplicate native tool call id(s): "
+                            + ", ".join(sorted(duplicate_ids))
+                        )
             except ToolProtocolViolation as exc:
                 emit(
                     record_call(
@@ -373,12 +379,12 @@ def run_tool_loop(
             if isinstance(decision, FinalSubmissionDecision):
                 envelope = NO_TOOL_REQUEST
             else:
-                native_call = decision.call
-                seen_tool_call_ids.add(native_call.call_id)
-                envelope = {
-                    "tool": native_call.name,
-                    "arguments": native_call.arguments,
-                }
+                native_calls = decision.calls
+                seen_tool_call_ids.update(call.call_id for call in native_calls)
+                envelope = [
+                    {"tool": call.name, "arguments": call.arguments}
+                    for call in native_calls
+                ]
         else:
             envelope = extract_tool_request(response.text)
 
@@ -423,15 +429,28 @@ def run_tool_loop(
                 is_repair=False,
                 response=response,
                 tool_request=(
-                    {
-                        "call_id": native_call.call_id,
-                        "tool": native_call.name,
-                        "arguments": native_call.arguments,
-                    }
-                    if native_call is not None
+                    (
+                        {
+                            "call_id": native_calls[0].call_id,
+                            "tool": native_calls[0].name,
+                            "arguments": native_calls[0].arguments,
+                        }
+                        if len(native_calls) == 1
+                        else {
+                            "calls": [
+                                {
+                                    "call_id": call.call_id,
+                                    "tool": call.name,
+                                    "arguments": call.arguments,
+                                }
+                                for call in native_calls
+                            ]
+                        }
+                    )
+                    if native_calls
                     else envelope if isinstance(envelope, dict) else {"raw": envelope}
                 ),
-                tool_call_id=native_call.call_id if native_call is not None else None,
+                tool_call_id=native_calls[0].call_id if len(native_calls) == 1 else None,
             )
         )
         call_index += 1
@@ -441,39 +460,52 @@ def run_tool_loop(
         # budget unreachable: the surface says "at most N", and a model that
         # used exactly N would be aborted instead of being allowed the turn that
         # answers.
-        if rounds >= max_tool_rounds:
+        requested_count = len(native_calls) if native_calls else 1
+        if rounds + requested_count > max_tool_rounds:
             raise ToolLoopError(
-                f"{request.role} requested more than {max_tool_rounds} tool(s) "
+                f"{request.role} requested {requested_count} tool(s) with only "
+                f"{max_tool_rounds - rounds} remaining in its {max_tool_rounds}-tool budget "
                 f"without producing a final answer; the limit is {max_tool_rounds}. "
-                "Aborting rather than letting the loop run on."
+                "No tool from this response was executed."
             )
 
-        outcome = _dispatch(
-            tools,
-            envelope,
-            call_index=call_index - 1,
-            request=request,
-            tool_call_id=native_call.call_id if native_call is not None else None,
-        )
-        outcomes.append(outcome)
-        rounds += 1
-
-        rendered = render_tool_result(outcome)
-        if getattr(tools, "protocol_version", "1") == "2":
-            rendered += f"\nTool requests used: {rounds}/{max_tool_rounds}; remaining: {max_tool_rounds - rounds}."
-        if native_call is not None:
-            messages.append(
-                ModelMessage(role="assistant", tool_calls=(native_call,))
-            )
-            messages.append(
-                ModelMessage(
-                    role="tool",
-                    name=native_call.name,
+        if native_calls:
+            turn_outcomes = []
+            for native_call, native_envelope in zip(native_calls, envelope, strict=True):
+                outcome = _dispatch(
+                    tools,
+                    native_envelope,
+                    call_index=call_index - 1,
+                    request=request,
                     tool_call_id=native_call.call_id,
-                    content=json.dumps(tool_result_payload(outcome), ensure_ascii=False),
                 )
+                outcomes.append(outcome)
+                turn_outcomes.append(outcome)
+                rounds += 1
+            messages.append(
+                ModelMessage(role="assistant", tool_calls=native_calls)
             )
+            for native_call, outcome in zip(native_calls, turn_outcomes, strict=True):
+                messages.append(
+                    ModelMessage(
+                        role="tool",
+                        name=native_call.name,
+                        tool_call_id=native_call.call_id,
+                        content=json.dumps(tool_result_payload(outcome), ensure_ascii=False),
+                    )
+                )
         else:
+            outcome = _dispatch(
+                tools,
+                envelope,
+                call_index=call_index - 1,
+                request=request,
+            )
+            outcomes.append(outcome)
+            rounds += 1
+            rendered = render_tool_result(outcome)
+            if getattr(tools, "protocol_version", "1") == "2":
+                rendered += f"\nTool requests used: {rounds}/{max_tool_rounds}; remaining: {max_tool_rounds - rounds}."
             messages.append(ModelMessage(role="assistant", content=response.text))
             messages.append(ModelMessage(role="user", content=rendered))
 
