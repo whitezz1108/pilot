@@ -1,0 +1,20 @@
+# Parameters frozen from the five 2026-10-31 xhigh anomaly runs.
+# BF16 and MTP are endpoint properties; this file records the request surface.
+models_version: bf16-mtp-xhigh-native-tools-20261101
+roles:
+  manager:
+    provider: openai-compatible
+    model_id: Qwen3.8-27B
+    temperature: 1.0
+    max_output_tokens: 32768
+    top_p: 0.95
+    timeout_seconds: 360.0
+    reasoning_effort: xhigh
+  compliance:
+    provider: openai-compatible
+    model_id: Qwen3.8-27B
+    temperature: 1.0
+    max_output_tokens: 32768
+    top_p: 0.95
+    timeout_seconds: 360.0
+    reasoning_effort: xhigh
