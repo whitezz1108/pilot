@@ -243,7 +243,12 @@ def render_tool_result(outcome: ToolOutcome) -> str:
     return "\n".join(lines)
 
 
-def tool_result_payload(outcome: ToolOutcome) -> dict[str, Any]:
+def tool_result_payload(
+    outcome: ToolOutcome,
+    *,
+    used: int | None = None,
+    limit: int | None = None,
+) -> dict[str, Any]:
     """Machine-readable tool result returned through a native tool message."""
     payload: dict[str, Any] = {
         "tool": outcome.tool,
@@ -253,6 +258,14 @@ def tool_result_payload(outcome: ToolOutcome) -> dict[str, Any]:
         payload["data"] = outcome.payload
     else:
         payload["error"] = outcome.error
+    if used is not None or limit is not None:
+        if used is None or limit is None:
+            raise ValueError("native tool-budget telemetry needs both used and limit")
+        payload["tool_budget"] = {
+            "used": used,
+            "limit": limit,
+            "remaining": limit - used,
+        }
     return payload
 
 
@@ -480,18 +493,25 @@ def run_tool_loop(
                     tool_call_id=native_call.call_id,
                 )
                 outcomes.append(outcome)
-                turn_outcomes.append(outcome)
                 rounds += 1
+                turn_outcomes.append((outcome, rounds))
             messages.append(
                 ModelMessage(role="assistant", tool_calls=native_calls)
             )
-            for native_call, outcome in zip(native_calls, turn_outcomes, strict=True):
+            for native_call, (outcome, used) in zip(native_calls, turn_outcomes, strict=True):
                 messages.append(
                     ModelMessage(
                         role="tool",
                         name=native_call.name,
                         tool_call_id=native_call.call_id,
-                        content=json.dumps(tool_result_payload(outcome), ensure_ascii=False),
+                        content=json.dumps(
+                            tool_result_payload(
+                                outcome,
+                                used=used,
+                                limit=max_tool_rounds,
+                            ),
+                            ensure_ascii=False,
+                        ),
                     )
                 )
         else:

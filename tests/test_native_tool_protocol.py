@@ -298,7 +298,13 @@ def test_native_loop_links_assistant_call_tool_result_and_tool_log():
     assert follow_up[-2].tool_calls == (call,)
     assert follow_up[-1].role == "tool"
     assert follow_up[-1].tool_call_id == call.call_id
-    assert json.loads(follow_up[-1].content)["status"] == "ok"
+    single_payload = json.loads(follow_up[-1].content)
+    assert single_payload["status"] == "ok"
+    assert single_payload["tool_budget"] == {
+        "used": 1,
+        "limit": 16,
+        "remaining": 15,
+    }
     assert log.records[0].tool_call_id == call.call_id
     assert tools.log.records[0].tool_call_id == call.call_id
 
@@ -355,6 +361,10 @@ def test_native_loop_executes_multiple_read_only_calls_in_provider_order():
     assert [message.tool_call_id for message in follow_up[-2:]] == [
         "call-control",
         "call-termination",
+    ]
+    assert [json.loads(message.content)["tool_budget"] for message in follow_up[-2:]] == [
+        {"used": 1, "limit": 16, "remaining": 15},
+        {"used": 2, "limit": 16, "remaining": 14},
     ]
     assert [record.tool_call_id for record in tools.log.records] == [
         "call-control",
