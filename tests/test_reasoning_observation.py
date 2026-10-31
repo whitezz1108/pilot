@@ -59,6 +59,39 @@ def test_real_transport_parses_sse_and_preserves_usage_and_unicode(monkeypatch):
     assert 'reasoning_content' not in json.loads(client(lambda *_: b'', reasoning_stream=True).build_request(request_for()).data)['messages'][0]
 
 
+def test_stream_reassembles_native_tool_call_deltas(monkeypatch):
+    events = [
+        chunk({'reasoning_content': '需要检索。'}),
+        chunk({'tool_calls': [{
+            'index': 0,
+            'id': 'call-stream-1',
+            'type': 'function',
+            'function': {'name': 'search_', 'arguments': '{"query":"change'},
+        }]}),
+        chunk({'tool_calls': [{
+            'index': 0,
+            'function': {'name': 'contract', 'arguments': ' of control"}'},
+        }]}, 'tool_calls'),
+    ]
+    monkeypatch.setattr(
+        'urllib.request.urlopen',
+        lambda *a, **k: io.BytesIO(stream_bytes(events)),
+    )
+    result = client(
+        _urlopen_transport,
+        reasoning_stream=True,
+        tool_transport='native',
+    ).generate(request_for())
+    assert result.text == ''
+    assert result.reasoning_content == '需要检索。'
+    assert len(result.tool_calls) == 1
+    call = result.tool_calls[0]
+    assert call.call_id == 'call-stream-1'
+    assert call.name == 'search_contract'
+    assert call.arguments == {'query': 'change of control'}
+    assert result.finish_reason == 'tool_calls'
+
+
 @pytest.mark.parametrize('failure', ['eof','timeout','malformed'])
 def test_failed_stream_keeps_partial_reasoning_without_usage_or_fake_duration(monkeypatch, failure):
     body=stream_bytes([chunk({'reasoning_content':'partial evidence'})],done=False)

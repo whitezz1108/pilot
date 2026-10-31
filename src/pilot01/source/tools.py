@@ -44,6 +44,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..model.tool_protocol import ToolDefinition
 from .document import ContractDocument, SourceError, build_document, is_paragraph_id
 from .index import BM25Index, EXCERPT_CHARS, excerpt, tokenize
 from .ledger import EvidenceAccess, EvidenceLedger
@@ -351,6 +352,7 @@ class SourceTools:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._timing = None
         self._parent_model_call_id = None
+        self._tool_call_id = None
         self._ledger = EvidenceLedger(node=node)
         self._contract_id: str | None = None
         self._document: ContractDocument | None = None
@@ -384,7 +386,7 @@ class SourceTools:
     @property
     def available_names(self) -> tuple[str, ...]:
         """The tool surface this node currently offers. Empty when unavailable."""
-        return SOURCE_TOOL_NAMES if self._available else ()
+        return self.tool_names if self._available else ()
 
     @property
     def tool_names(self) -> tuple[str, ...]:
@@ -397,6 +399,39 @@ class SourceTools:
         flag keeps the two consistent without letting a prompt read live state.
         """
         return SOURCE_TOOL_NAMES
+
+    @property
+    def tool_definitions(self) -> tuple[ToolDefinition, ...]:
+        """Closed JSON Schemas for the source tools this layer exposes."""
+        return (
+            ToolDefinition(
+                name=SEARCH_CONTRACT,
+                description=(
+                    "Search the current contract and return ranked paragraph snippets. "
+                    "A snippet is not a source opening."
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "minLength": 1},
+                    },
+                    "required": ["query"],
+                    "additionalProperties": False,
+                },
+            ),
+            ToolDefinition(
+                name=OPEN_SOURCE_SPAN,
+                description="Open one paragraph returned by contract search and read its exact text.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "paragraph_id": {"type": "string", "minLength": 1},
+                    },
+                    "required": ["paragraph_id"],
+                    "additionalProperties": False,
+                },
+            ),
+        )
 
     @property
     def document(self) -> ContractDocument | None:
@@ -464,6 +499,7 @@ class SourceTools:
         invocation: int,
         run_id: str | None = None,
         parent_model_call_id: str | None = None,
+        tool_call_id: str | None = None,
     ) -> ToolOutcome:
         """Run one validated tool request and log the outcome.
 
@@ -472,13 +508,25 @@ class SourceTools:
         a third tool or passes an argument nobody defined gets a refusal it can
         read and act on, not a traceback.
         """
-        previous = (self._call_index, self._invocation, self._run_id, self._parent_model_call_id)
-        self._call_index, self._invocation, self._run_id, self._parent_model_call_id = call_index, invocation, run_id, parent_model_call_id
+        previous = (
+            self._call_index,
+            self._invocation,
+            self._run_id,
+            self._parent_model_call_id,
+            self._tool_call_id,
+        )
+        self._call_index, self._invocation, self._run_id, self._parent_model_call_id, self._tool_call_id = (
+            call_index,
+            invocation,
+            run_id,
+            parent_model_call_id,
+            tool_call_id,
+        )
         try:
             outcome, _ = self._invoke(request.tool, dict(request.arguments))
             return outcome
         finally:
-            self._call_index, self._invocation, self._run_id, self._parent_model_call_id = previous
+            self._call_index, self._invocation, self._run_id, self._parent_model_call_id, self._tool_call_id = previous
 
     @timed_tool
     def reject(
@@ -491,16 +539,29 @@ class SourceTools:
         invocation: int,
         run_id: str | None = None,
         parent_model_call_id: str | None = None,
+        tool_call_id: str | None = None,
     ) -> ToolOutcome:
         """Log a request that never reached a tool, because its envelope was malformed."""
-        previous = (self._call_index, self._invocation, self._run_id, self._parent_model_call_id)
-        self._call_index, self._invocation, self._run_id, self._parent_model_call_id = call_index, invocation, run_id, parent_model_call_id
+        previous = (
+            self._call_index,
+            self._invocation,
+            self._run_id,
+            self._parent_model_call_id,
+            self._tool_call_id,
+        )
+        self._call_index, self._invocation, self._run_id, self._parent_model_call_id, self._tool_call_id = (
+            call_index,
+            invocation,
+            run_id,
+            parent_model_call_id,
+            tool_call_id,
+        )
         try:
             return self._emit(
                 ToolOutcome(tool=tool, arguments=dict(arguments or {}), ok=False, error=error)
             )
         finally:
-            self._call_index, self._invocation, self._run_id, self._parent_model_call_id = previous
+            self._call_index, self._invocation, self._run_id, self._parent_model_call_id, self._tool_call_id = previous
 
     # -- internals ---------------------------------------------------------
 
@@ -622,7 +683,7 @@ class SourceTools:
         self._log.append(
             ToolCallRecord(
                 sequence=len(self._log),
-                tool_call_id=uuid4().hex,
+                tool_call_id=self._tool_call_id or uuid4().hex,
                 parent_model_call_id=self._parent_model_call_id,
                 source_version=self._document.text_hash if self._document else None,
                 result_locators=locators,
@@ -641,7 +702,9 @@ class SourceTools:
                 responded_at=now,
                 page_metadata=(
                     {k: v for k, v in outcome.payload.items() if k != "results"}
-                    if getattr(self, "protocol_version", "1") == "2" and outcome.tool == SEARCH_CONTRACT else None
+                    if getattr(self, "protocol_version", "1") in {"2", "native-v1"}
+                    and outcome.tool in {SEARCH_CONTRACT, "next_search_page"}
+                    else None
                 ),
             )
         )

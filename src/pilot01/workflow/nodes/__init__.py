@@ -153,7 +153,8 @@ def build_llm_registry(
         from ...source.pagination import PagedSourceTools
         return PagedSourceTools(node=role, library=source, log=tool_log,
                                 target_categories=target_categories,
-                                top_k=runtime.page_size, excerpt_chars=runtime.excerpt_chars)
+                                top_k=runtime.page_size, excerpt_chars=runtime.excerpt_chars,
+                                protocol_version=runtime.tool_protocol)
 
     return NodeRegistry(
         [

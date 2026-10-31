@@ -5,6 +5,7 @@ import re
 from ...model import ModelMessage
 from ...prompts import load_prompt
 from ...source.tools import SOURCE_TOOL_NAMES
+from ...source.pagination import PAGED_SOURCE_TOOL_NAMES
 from ...source.verification_v3 import RULES
 from .render import render_memo_block, render_policy_block
 from .tool_loop import render_tool_surface
@@ -34,9 +35,15 @@ def build_messages(view, *, role, disclosure_level, runtime):
         # Include every handed-over ID, including manager-opened sources.
         material = "MANAGER HANDOFF\n" + json.dumps(view.manager_output.model_dump(mode="json"), ensure_ascii=False)
     system = template.render(policy=render_policy_block(view.policy))
+    tool_names = (
+        PAGED_SOURCE_TOOL_NAMES
+        if runtime.tool_protocol == "native-v1"
+        else SOURCE_TOOL_NAMES
+    )
     common = "\n\n".join((f"CASE: {view.case_id}", material,
-        render_tool_surface(names=SOURCE_TOOL_NAMES, available=view.source_access,
-                            max_tool_rounds=runtime.max_tool_requests_per_node, protocol_version="2")))
+        render_tool_surface(names=tool_names, available=view.source_access,
+                            max_tool_rounds=runtime.max_tool_requests_per_node,
+                            protocol_version=runtime.tool_protocol)))
     if runtime.runtime_version == "3":
         requirement = ("Before submitting, you must search separately for every policy target category, "
                        "open the relevant returned source paragraphs yourself, and ground your assessment "

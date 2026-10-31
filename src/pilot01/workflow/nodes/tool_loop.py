@@ -1,4 +1,4 @@
-"""The bounded tool-use loop, and the envelope a model uses to ask for a tool.
+"""The bounded tool-use loop for native and frozen legacy tool protocols.
 
 One node invocation may now take several model turns::
 
@@ -13,18 +13,14 @@ workflow layer rather than the model layer because it is node behaviour: the
 model boundary stays "one request, one response", and only a node knows what to
 do with a turn that is not an answer.
 
-**Why an envelope and not native tool-calling.** A provider's native tool-call
-protocol would put a second, provider-specific vocabulary on the model boundary
-and would mean the transport, not this module, decided what a tool request is.
-The request is therefore a plain JSON object the model writes as its whole
-response::
+Frozen experiments retain their historical JSON text envelope::
 
     {"tool_request": {"tool": "search_contract", "arguments": {"query": "..."}}}
 
-which keeps :class:`~pilot01.model.client.ModelRequest` exactly as it was -- two
-or three text messages and a parameter set -- and keeps every provider on the
-same footing. The same envelope is described, in the same words, in both role
-prompts; only the permission block around it differs between conditions.
+New experiments use provider-native structured tool calls normalized by the
+model adapter.  Both paths converge on the same validated :class:`ToolRequest`
+and the same tool execution/logging layer; the compatibility path is explicit
+rather than silently inferred.
 
 **Bounded.** ``MAX_TOOL_ROUNDS`` caps the number of tool *requests* one
 invocation may make. A model that asks for a tool on every turn is cut off with
@@ -54,12 +50,14 @@ from ...model import (
     ModelOutputError,
     ModelMessage,
     ModelRequest,
+    ModelToolCall,
     RepairSpec,
     StructuredCallResult,
     call_structured,
     extract_json_object,
     record_call,
 )
+from ...model.tool_protocol import ToolTransport
 from ...source.tools import (
     TOOL_ARGUMENTS,
     SourceTools,
@@ -68,6 +66,12 @@ from ...source.tools import (
     ToolRequest,
 )
 from ..transitions import ProtocolError
+from .agent_protocol import (
+    FinalSubmissionDecision,
+    ToolCallDecision,
+    ToolProtocolViolation,
+    decide_agent_response,
+)
 
 __all__ = [
     "MAX_TOOL_ROUNDS",
@@ -76,6 +80,7 @@ __all__ = [
     "ToolLoopResult",
     "extract_tool_request",
     "render_tool_result",
+    "tool_result_payload",
     "render_tool_surface",
     "run_tool_loop",
 ]
@@ -144,9 +149,27 @@ def render_tool_surface(*, names: Sequence[str], available: bool, max_tool_round
         return "No source tools are available to you in this workflow."
     lines = ["You may use these source tools:"]
     for name in names:
-        arguments = ("query, target_category, cursor (optional)" if protocol_version == "2" and name == "search_contract"
-                     else ", ".join(TOOL_ARGUMENTS[name]))
+        if protocol_version == "2" and name == "search_contract":
+            arguments = "query, target_category, cursor (optional)"
+        elif protocol_version == "native-v1" and name == "search_contract":
+            arguments = "query, target_category"
+        elif protocol_version == "native-v1" and name == "next_search_page":
+            arguments = "cursor"
+        else:
+            arguments = ", ".join(TOOL_ARGUMENTS[name])
         lines.append(f"- `{name}({arguments})`")
+    if protocol_version == "native-v1":
+        lines.extend(
+            [
+                "",
+                "Use the provided native tool interface for a tool call; do not write a `tool_request` JSON envelope in normal content.",
+                "A tool call and a final answer are mutually exclusive. When ready to submit, return the final answer fields directly without a `final_answer` wrapper.",
+                f"You may request at most {max_tool_rounds} tools.",
+                "Search returns five ranked snippets by default. Continue only with next_search_page(next_cursor); the cursor already binds the original query and target category.",
+                "A snippet is not a full source opening. Open evidence with open_source_span(paragraph_id).",
+            ]
+        )
+        return "\n".join(lines)
     lines.extend(
         [
             "",
@@ -186,7 +209,7 @@ def render_tool_result(outcome: ToolOutcome) -> str:
         lines.append(f"error: {outcome.error}")
         return "\n".join(lines)
 
-    if outcome.tool == "search_contract":
+    if outcome.tool in {"search_contract", "next_search_page"}:
         # Protocol v2 pagination metadata is part of the tool result, including
         # empty/repeated pages. Preserve it before any early return.
         if "has_more" in outcome.payload:
@@ -218,6 +241,19 @@ def render_tool_result(outcome: ToolOutcome) -> str:
         ]
     )
     return "\n".join(lines)
+
+
+def tool_result_payload(outcome: ToolOutcome) -> dict[str, Any]:
+    """Machine-readable tool result returned through a native tool message."""
+    payload: dict[str, Any] = {
+        "tool": outcome.tool,
+        "status": "ok" if outcome.ok else "error",
+    }
+    if outcome.ok:
+        payload["data"] = outcome.payload
+    else:
+        payload["error"] = outcome.error
+    return payload
 
 
 @dataclass(frozen=True)
@@ -257,6 +293,7 @@ def run_tool_loop(
     tools: SourceTools | None,
     max_tool_rounds: int = MAX_TOOL_ROUNDS,
     audit: Callable[[ModelRequest], None] | None = None,
+    tool_transport: ToolTransport = "legacy-text",
 ) -> ToolLoopResult:
     """Run one node invocation to a final structured answer.
 
@@ -276,6 +313,7 @@ def run_tool_loop(
     outcomes: list[ToolOutcome] = []
     call_index = 0
     rounds = 0
+    seen_tool_call_ids: set[str] = set()
 
     def emit(record: Any) -> None:
         records.append(record)
@@ -308,7 +346,41 @@ def run_tool_loop(
             emit(record_call(index=call_index, request=request, prompt_version=request.prompt_version,
                              attempt=0, is_repair=False, response=response, parse_error="output_truncated"))
             raise ModelOutputError(f"output limit ({request.params.max_output_tokens} tokens, finish_reason='length'); no repair attempted")
-        envelope = extract_tool_request(response.text)
+        native_call: ModelToolCall | None = None
+        if tool_transport == "native":
+            try:
+                decision = decide_agent_response(response, transport=tool_transport)
+                if (
+                    isinstance(decision, ToolCallDecision)
+                    and decision.call.call_id in seen_tool_call_ids
+                ):
+                    raise ToolProtocolViolation(
+                        f"duplicate native tool call id: {decision.call.call_id}"
+                    )
+            except ToolProtocolViolation as exc:
+                emit(
+                    record_call(
+                        index=call_index,
+                        request=request,
+                        prompt_version=request.prompt_version,
+                        attempt=0,
+                        is_repair=False,
+                        response=response,
+                        parse_error=f"tool_protocol_violation: {exc}",
+                    )
+                )
+                raise ToolLoopError(str(exc)) from exc
+            if isinstance(decision, FinalSubmissionDecision):
+                envelope = NO_TOOL_REQUEST
+            else:
+                native_call = decision.call
+                seen_tool_call_ids.add(native_call.call_id)
+                envelope = {
+                    "tool": native_call.name,
+                    "arguments": native_call.arguments,
+                }
+        else:
+            envelope = extract_tool_request(response.text)
 
         if envelope is NO_TOOL_REQUEST:
             # Not a tool request: this is the answer, or a malformed attempt at
@@ -350,7 +422,16 @@ def run_tool_loop(
                 attempt=0,
                 is_repair=False,
                 response=response,
-                tool_request=envelope if isinstance(envelope, dict) else {"raw": envelope},
+                tool_request=(
+                    {
+                        "call_id": native_call.call_id,
+                        "tool": native_call.name,
+                        "arguments": native_call.arguments,
+                    }
+                    if native_call is not None
+                    else envelope if isinstance(envelope, dict) else {"raw": envelope}
+                ),
+                tool_call_id=native_call.call_id if native_call is not None else None,
             )
         )
         call_index += 1
@@ -367,15 +448,34 @@ def run_tool_loop(
                 "Aborting rather than letting the loop run on."
             )
 
-        outcome = _dispatch(tools, envelope, call_index=call_index - 1, request=request)
+        outcome = _dispatch(
+            tools,
+            envelope,
+            call_index=call_index - 1,
+            request=request,
+            tool_call_id=native_call.call_id if native_call is not None else None,
+        )
         outcomes.append(outcome)
         rounds += 1
 
-        messages.append(ModelMessage(role="assistant", content=response.text))
         rendered = render_tool_result(outcome)
         if getattr(tools, "protocol_version", "1") == "2":
             rendered += f"\nTool requests used: {rounds}/{max_tool_rounds}; remaining: {max_tool_rounds - rounds}."
-        messages.append(ModelMessage(role="user", content=rendered))
+        if native_call is not None:
+            messages.append(
+                ModelMessage(role="assistant", tool_calls=(native_call,))
+            )
+            messages.append(
+                ModelMessage(
+                    role="tool",
+                    name=native_call.name,
+                    tool_call_id=native_call.call_id,
+                    content=json.dumps(tool_result_payload(outcome), ensure_ascii=False),
+                )
+            )
+        else:
+            messages.append(ModelMessage(role="assistant", content=response.text))
+            messages.append(ModelMessage(role="user", content=rendered))
 
 
 def _dispatch(
@@ -384,6 +484,7 @@ def _dispatch(
     *,
     call_index: int,
     request: ModelRequest,
+    tool_call_id: str | None = None,
 ) -> ToolOutcome:
     """Turn an envelope into a tool outcome, refusing anything malformed."""
     if tools is None:
@@ -403,6 +504,7 @@ def _dispatch(
             invocation=request.invocation,
             run_id=request.run_id,
             parent_model_call_id=request.model_call_id,
+            tool_call_id=tool_call_id,
         )
     return tools.execute(
         tool_request,
@@ -410,4 +512,5 @@ def _dispatch(
         invocation=request.invocation,
         run_id=request.run_id,
         parent_model_call_id=request.model_call_id,
+        tool_call_id=tool_call_id,
     )

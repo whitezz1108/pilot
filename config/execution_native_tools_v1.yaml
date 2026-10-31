@@ -1,0 +1,13 @@
+# Native tool-call transport for the isolated SGLang validation endpoint.
+max_parallel_runs: 1
+http_retries: 0
+recovery_successes: 20
+role_slots:
+  manager: 1
+  compliance: 1
+endpoints:
+- slot: 1
+  max_in_flight: 1
+  reasoning_stream: true
+  reasoning_tokenizer_path: /home/evan/ai/models/Qwen3.8-27B/tokenizer.json
+  tool_transport: native

@@ -17,6 +17,7 @@ class StreamCapture:
         self.events = []
         self.content = []
         self.reasoning = []
+        self.tool_calls = {}
         self.envelope = {"choices": [{"index": 0, "message": {"content": ""}, "finish_reason": None}]}
         self.first_reasoning = self.last_reasoning = self.first_content = None
         self.done = False
@@ -47,6 +48,23 @@ class StreamCapture:
                         self.last_reasoning = elapsed
                     elif self.first_content is None:
                         self.first_content = elapsed
+            for tool_delta in delta.get("tool_calls") or []:
+                if not isinstance(tool_delta, dict):
+                    continue
+                index = tool_delta.get("index", 0)
+                call = self.tool_calls.setdefault(
+                    index,
+                    {"id": None, "type": "function", "function": {"name": "", "arguments": ""}},
+                )
+                if tool_delta.get("id") is not None:
+                    call["id"] = tool_delta["id"]
+                function = tool_delta.get("function") or {}
+                if isinstance(function.get("name"), str):
+                    call["function"]["name"] += function["name"]
+                if isinstance(function.get("arguments"), str):
+                    call["function"]["arguments"] += function["arguments"]
+                if self.first_content is None:
+                    self.first_content = elapsed
             if choice.get("finish_reason") is not None:
                 self.envelope["choices"][0]["finish_reason"] = choice["finish_reason"]
 
@@ -55,6 +73,9 @@ class StreamCapture:
         message["content"] = "".join(self.content)
         if self.reasoning:
             message["reasoning_content"] = "".join(self.reasoning)
+        if self.tool_calls:
+            message["content"] = None
+            message["tool_calls"] = [self.tool_calls[index] for index in sorted(self.tool_calls)]
         return self.envelope
 
     def timing(self):

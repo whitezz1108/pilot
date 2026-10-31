@@ -81,6 +81,27 @@ def test_legacy_execution_settings_omit_role_mapping():
     assert "role_slots" not in settings.model_dump(mode="json")
 
 
+def test_native_tool_profile_and_endpoint_are_explicit(tmp_path, monkeypatch):
+    credentials(monkeypatch)
+    profile = ExperimentProfile(CONFIG / "experiment_native_tools_v1.yaml")
+    settings = ExecutionSettings.load(CONFIG / "execution_native_tools_v1.yaml")
+    assert profile.runtime.tool_protocol == "native-v1"
+    assert profile.models.for_role("manager").max_output_tokens == 32768
+    assert profile.models.for_role("manager").reasoning_effort == "xhigh"
+    assert settings.max_parallel_runs == 1
+    assert settings.http_retries == 0
+    assert settings.role_slots == {"manager": 1, "compliance": 1}
+    assert settings.endpoints[0].tool_transport == "native"
+    job = SimpleNamespace(run_id="native-run")
+    pool = PooledLiveFactory(
+        settings,
+        [job],
+        tmp_path,
+        transport=lambda *_: envelope('{"ok":true}'),
+    )
+    assert pool(role="manager", job=job).tool_transport == "native"
+
+
 def test_engineering_failure_is_not_sent_to_other_role_endpoint(tmp_path, monkeypatch):
     credentials(monkeypatch)
     from pilot01.model.client import ModelClientError

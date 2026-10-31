@@ -212,6 +212,7 @@ def record_call(
     parse_error: str | None = None,
     error: str | None = None,
     tool_request: dict[str, Any] | None = None,
+    tool_call_id: str | None = None,
 ) -> ModelCallRecord:
     """Build one raw-call record from a request and whatever came back.
 
@@ -249,6 +250,7 @@ def record_call(
         error=error,
         is_tool_turn=tool_request is not None,
         tool_request=tool_request,
+        tool_call_id=tool_call_id,
     )
 
 

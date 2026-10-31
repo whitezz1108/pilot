@@ -146,6 +146,8 @@ class ModelCallRecord(BaseModel):
     """
     tool_request: dict[str, Any] | None = None
     """The tool request this turn made, exactly as the model wrote it."""
+    tool_call_id: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    """Provider call id that binds the assistant request to its tool result."""
 
     error: str | None = None
     """Transport-level failure, when the call never produced a response."""

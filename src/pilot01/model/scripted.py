@@ -30,8 +30,10 @@ from .client import (
     ModelClientError,
     ModelRequest,
     ModelResponse,
+    ModelToolCall,
     TokenUsage,
 )
+from .tool_protocol import ToolTransport
 
 __all__ = ["ScriptedModelClient"]
 
@@ -57,7 +59,7 @@ class ScriptedModelClient:
 
     def __init__(
         self,
-        outputs: Sequence[str],
+        outputs: Sequence[str | ModelToolCall],
         *,
         clock: Callable[[], datetime] | None = None,
         repeat_last: bool = False,
@@ -65,6 +67,7 @@ class ScriptedModelClient:
         request_id_prefix: str = "scripted",
         provider: str | None = None,
         model_id: str | None = None,
+        tool_transport: ToolTransport = "legacy-text",
     ) -> None:
         if not outputs:
             raise ValueError(
@@ -77,6 +80,7 @@ class ScriptedModelClient:
         self._request_id_prefix = request_id_prefix
         self._provider_override = provider
         self._model_id_override = model_id
+        self._tool_transport = tool_transport
         self._requests: list[ModelRequest] = []
         self._responses: list[ModelResponse] = []
         if clock is None:
@@ -100,8 +104,12 @@ class ScriptedModelClient:
         return len(self._requests)
 
     @property
-    def outputs(self) -> tuple[str, ...]:
+    def outputs(self) -> tuple[str | ModelToolCall, ...]:
         return self._outputs
+
+    @property
+    def tool_transport(self) -> ToolTransport:
+        return self._tool_transport
 
     # -- ModelClient -------------------------------------------------------
 
@@ -112,9 +120,9 @@ class ScriptedModelClient:
             )
         index = len(self._requests)
         if index < len(self._outputs):
-            text = self._outputs[index]
+            output = self._outputs[index]
         elif self._repeat_last:
-            text = self._outputs[-1]
+            output = self._outputs[-1]
         else:
             raise ModelClientError(
                 f"scripted client has no response for call {index}; the script "
@@ -126,6 +134,8 @@ class ScriptedModelClient:
         self._requests.append(request)
         requested_at = self._clock()
         responded_at = self._clock()
+        text = output if isinstance(output, str) else ""
+        tool_calls = () if isinstance(output, str) else (output,)
         response = ModelResponse(
             text=text,
             provider=self._provider_override or request.params.provider,
@@ -134,6 +144,7 @@ class ScriptedModelClient:
             responded_at=responded_at,
             request_id=f"{self._request_id_prefix}-{index}",
             usage=self._usage,
+            tool_calls=tool_calls,
         )
         self._responses.append(response)
         return response

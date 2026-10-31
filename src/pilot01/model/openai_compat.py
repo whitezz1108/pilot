@@ -33,6 +33,7 @@ from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 
 from .reasoning import StreamCapture, observe_reasoning
+from .tool_protocol import ModelToolCall, ToolTransport
 
 from .client import (
     ModelClientError,
@@ -134,6 +135,7 @@ class OpenAICompatibleClient:
         extra_headers: Mapping[str, str] | None = None,
         reasoning_stream: bool = False,
         reasoning_tokenizer_path: str | None = None,
+        tool_transport: ToolTransport = "legacy-text",
     ) -> None:
         resolved_url = base_url or os.environ.get(DEFAULT_BASE_URL_ENV)
         if not resolved_url:
@@ -167,6 +169,7 @@ class OpenAICompatibleClient:
         self._extra_headers = dict(extra_headers or {})
         self._reasoning_stream = reasoning_stream
         self._reasoning_tokenizer_path = reasoning_tokenizer_path
+        self._tool_transport = tool_transport
 
     @property
     def provider(self) -> str:
@@ -175,6 +178,10 @@ class OpenAICompatibleClient:
     @property
     def endpoint(self) -> str:
         return f"{self._base_url}/chat/completions"
+
+    @property
+    def tool_transport(self) -> ToolTransport:
+        return self._tool_transport
 
     # -- request construction (pure; exercised by tests without a network) ---
 
@@ -187,10 +194,7 @@ class OpenAICompatibleClient:
         params: ModelParams = request.params
         payload: dict[str, object] = {
             "model": params.model_id,
-            "messages": [
-                {"role": message.role, "content": message.content}
-                for message in request.messages
-            ],
+            "messages": [message.wire_dict() for message in request.messages],
             "temperature": params.temperature,
         }
         if params.max_output_tokens is not None:
@@ -199,7 +203,20 @@ class OpenAICompatibleClient:
             payload["reasoning_effort"] = params.reasoning_effort
         if params.top_p is not None:
             payload["top_p"] = params.top_p
-        if self._json_mode:
+        strict_tool_protocol = os.environ.get("PILOT01_STRICT_TOOL_PROTOCOL") == "1"
+        if request.tools:
+            if self._tool_transport != "native":
+                raise ModelClientError(
+                    "request declares native tools but this client is configured for legacy-text tool transport"
+                )
+            if strict_tool_protocol:
+                raise ModelClientError(
+                    "native tool calls cannot be combined with the legacy PILOT01_STRICT_TOOL_PROTOCOL grammar"
+                )
+            payload["tools"] = [tool.openai_function() for tool in request.tools]
+            payload["tool_choice"] = request.tool_choice or "auto"
+            payload["parallel_tool_calls"] = False
+        elif self._json_mode:
             if self._json_object_grammar is not None:
                 payload["ebnf"] = self._json_object_grammar
             else:
@@ -208,7 +225,7 @@ class OpenAICompatibleClient:
             payload["stream"] = True
             payload["stream_options"] = {"include_usage": True}
 
-        if os.environ.get('PILOT01_STRICT_TOOL_PROTOCOL') == '1':
+        if strict_tool_protocol:
             from .protocol_constraints import build_schema, compile_grammar
             payload.pop('response_format', None)
             payload['ebnf'] = compile_grammar(build_schema(payload['messages'], request.role))
@@ -301,6 +318,7 @@ class OpenAICompatibleClient:
             reasoning_content=reasoning,
             reasoning_observation=observation,
             provider_response=provider_response,
+            tool_calls=self._extract_tool_calls(envelope),
         )
 
     # -- response decoding --------------------------------------------------
@@ -334,6 +352,8 @@ class OpenAICompatibleClient:
             )
         message = choices[0].get("message") or {}
         content = message.get("content")
+        if content is None and message.get("tool_calls"):
+            return ""
         if content is None and isinstance(message.get("reasoning_content"), str):
             return ""  # Preserve reasoning-only/truncated responses for auditing.
         if isinstance(content, str):
@@ -349,6 +369,44 @@ class OpenAICompatibleClient:
             f"model endpoint returned a message with no usable content "
             f"(content is {type(content).__name__})"
         )
+
+    @staticmethod
+    def _extract_tool_calls(envelope: dict) -> tuple[ModelToolCall, ...]:
+        choices = envelope.get("choices") or []
+        if not choices or not isinstance(choices[0], dict):
+            return ()
+        message = choices[0].get("message") or {}
+        raw_calls = message.get("tool_calls") or []
+        if not isinstance(raw_calls, list):
+            raise ModelClientError("model endpoint returned tool_calls that is not a list")
+        calls = []
+        for index, raw in enumerate(raw_calls):
+            if not isinstance(raw, dict):
+                raise ModelClientError(f"tool_calls[{index}] is not an object")
+            function = raw.get("function") or {}
+            call_id = raw.get("id")
+            name = function.get("name") if isinstance(function, dict) else None
+            raw_arguments = function.get("arguments") if isinstance(function, dict) else None
+            if not isinstance(call_id, str) or not call_id:
+                raise ModelClientError(f"tool_calls[{index}] has no call id")
+            if not isinstance(name, str) or not name:
+                raise ModelClientError(f"tool_calls[{index}] has no function name")
+            if isinstance(raw_arguments, str):
+                try:
+                    arguments = json.loads(raw_arguments)
+                except json.JSONDecodeError:
+                    arguments = raw_arguments
+            else:
+                arguments = raw_arguments
+            calls.append(
+                ModelToolCall(
+                    call_id=call_id,
+                    name=name,
+                    arguments=arguments,
+                    raw_arguments=raw_arguments if isinstance(raw_arguments, str) else None,
+                )
+            )
+        return tuple(calls)
 
     @staticmethod
     def _extract_finish_reason(envelope: dict) -> str | None:

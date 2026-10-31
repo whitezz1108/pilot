@@ -74,6 +74,7 @@ from .verification import (
     evaluate_verification,
     unverifiable_outcome,
 )
+from .pagination import NEXT_SEARCH_PAGE, PAGED_SOURCE_TOOL_NAMES, PagedSourceTools
 
 __all__ = [
     # document
@@ -112,6 +113,9 @@ __all__ = [
     "ToolRequest",
     "evidence_access",
     "replay_ledger",
+    "NEXT_SEARCH_PAGE",
+    "PAGED_SOURCE_TOOL_NAMES",
+    "PagedSourceTools",
     # verification
     "VALIDATOR_VERSION",
     "CitationAudit",

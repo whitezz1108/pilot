@@ -55,6 +55,7 @@ from ...model import (
     RepairSpec,
     call_structured,
 )
+from ...model.tool_protocol import ToolTransport
 from ...prompts import PromptTemplate
 from ...source.tools import SourceTools
 from ...source.verification import VerificationLog, evaluate_verification
@@ -212,6 +213,7 @@ def make_llm_agent_node(
     max_tool_rounds: int = MAX_TOOL_ROUNDS,
     validator_version: str | None = None,
     enforce_verification: bool = True,
+    tool_transport: ToolTransport = "legacy-text",
 ) -> tuple[Node, AgentContext]:
     """Build an LLM-backed agent node, and the context that observes it.
 
@@ -231,6 +233,10 @@ def make_llm_agent_node(
         seed_upstream=seed_upstream if seed_upstream is not None else (lambda view: ()),
         validator_version=validator_version,
     )
+    if tool_transport == "native" and getattr(client, "tool_transport", None) != "native":
+        raise ValueError(
+            "native tool protocol requires a model client configured with native tool transport"
+        )
 
     def build_input(state: Any, invocation: int) -> RestrictedView:
         # Read from the state here, where the state is legitimately available,
@@ -241,8 +247,15 @@ def make_llm_agent_node(
         return build_view(state, invocation=invocation)
 
     def build_request(messages: tuple[ModelMessage, ...], view: RestrictedView) -> ModelRequest:
+        definitions = (
+            context.tools.tool_definitions
+            if tool_transport == "native" and context.tools is not None and view.source_access
+            else ()
+        )
         return ModelRequest(
             messages=messages,
+            tools=definitions,
+            tool_choice="auto" if definitions else None,
             params=params,
             role=role,
             prompt_version=prompt.system_prompt.ref,
@@ -294,6 +307,7 @@ def make_llm_agent_node(
                 tools=context.tools,
                 max_tool_rounds=max_tool_rounds,
                 audit=audit_request,
+                tool_transport=tool_transport,
             )
         except ModelClientError as exc:
             raise ProtocolError(f"{name} model call failed: {exc}") from exc

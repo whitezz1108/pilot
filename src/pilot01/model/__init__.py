@@ -31,11 +31,13 @@ from .client import (
     ModelClient,
     ModelClientError,
     ModelMessage,
+    ModelToolCall,
     ModelOutputError,
     ModelParams,
     ModelRequest,
     ModelResponse,
     TokenUsage,
+    ToolDefinition,
 )
 from .log import ModelCallLog, ModelCallRecord, SecretLeakError
 from .parsing import (
@@ -53,11 +55,13 @@ __all__ = [
     "ModelClient",
     "ModelClientError",
     "ModelMessage",
+    "ModelToolCall",
     "ModelOutputError",
     "ModelParams",
     "ModelRequest",
     "ModelResponse",
     "TokenUsage",
+    "ToolDefinition",
     "ScriptedModelClient",
     "MAX_FORMAT_REPAIRS",
     "RepairSpec",

@@ -22,11 +22,14 @@ What the boundary guarantees, and why each part is here:
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from uuid import uuid4
 from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from .tool_protocol import ModelToolCall, ToolDefinition
 
 __all__ = [
     "ModelClientError",
@@ -34,6 +37,8 @@ __all__ = [
     "ModelParams",
     "PreparationModelParams",
     "ModelMessage",
+    "ModelToolCall",
+    "ToolDefinition",
     "TokenUsage",
     "ModelRequest",
     "ModelResponse",
@@ -106,18 +111,58 @@ class PreparationModelParams(ModelParams):
 
 
 class ModelMessage(BaseModel):
-    """One chat message. ``system`` and ``user`` only -- see the note below.
-
-    ``assistant`` exists because the repair turn quotes the model's own previous
-    output back to it. No conversation history is ever carried between nodes:
-    each invocation builds its messages from scratch, and no object in this
-    codebase stores a message list across calls.
-    """
+    """One provider-neutral chat message, including native tool turns."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    role: Literal["system", "user", "assistant"]
-    content: str
+    role: Literal["system", "user", "assistant", "tool"]
+    content: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    tool_calls: tuple[ModelToolCall, ...] = Field(
+        default=(),
+        exclude_if=lambda value: not value,
+    )
+    tool_call_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    name: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @model_validator(mode="after")
+    def _valid_shape(self) -> "ModelMessage":
+        if self.role in {"system", "user"}:
+            if self.content is None or self.tool_calls or self.tool_call_id or self.name:
+                raise ValueError(f"{self.role} messages carry content only")
+        elif self.role == "assistant":
+            if self.tool_call_id or self.name:
+                raise ValueError("assistant messages cannot identify a tool result")
+            if self.tool_calls and self.content not in (None, ""):
+                raise ValueError("assistant content and tool_calls are mutually exclusive")
+            if not self.tool_calls and self.content is None:
+                raise ValueError("assistant messages need content or tool_calls")
+        else:
+            if self.content is None or not self.tool_call_id or not self.name or self.tool_calls:
+                raise ValueError("tool messages require content, name and tool_call_id")
+        return self
+
+    def wire_dict(self) -> dict:
+        """Render the OpenAI-compatible message shape without provider logic."""
+        payload: dict[str, object] = {"role": self.role, "content": self.content}
+        if self.tool_calls:
+            payload["tool_calls"] = [
+                {
+                    "id": call.call_id,
+                    "type": "function",
+                    "function": {
+                        "name": call.name,
+                        "arguments": call.raw_arguments
+                        if call.raw_arguments is not None
+                        else json.dumps(call.arguments, ensure_ascii=False),
+                    },
+                }
+                for call in self.tool_calls
+            ]
+        if self.tool_call_id is not None:
+            payload["tool_call_id"] = self.tool_call_id
+        if self.name is not None:
+            payload["name"] = self.name
+        return payload
 
 
 class TokenUsage(BaseModel):
@@ -143,6 +188,11 @@ class ModelRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     messages: tuple[ModelMessage, ...]
+    tools: tuple[ToolDefinition, ...] = Field(default=(), exclude_if=lambda value: not value)
+    tool_choice: Literal["auto", "none", "required"] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     model_call_id: str = Field(default_factory=lambda: uuid4().hex)
     params: ModelParams | PreparationModelParams
     role: str
@@ -158,6 +208,10 @@ class ModelRequest(BaseModel):
     def _preparation_params_only_for_preparation(self) -> "ModelRequest":
         if isinstance(self.params, PreparationModelParams) and self.role not in {"material_generator", "material_reviewer"}:
             raise ValueError("preparation model parameters are only allowed for material preparation roles")
+        if self.tool_choice is not None and not self.tools:
+            raise ValueError("tool_choice requires at least one tool definition")
+        if self.tools and len({tool.name for tool in self.tools}) != len(self.tools):
+            raise ValueError("tool names must be unique within one request")
         return self
 
     def rendered_input(self) -> str:
@@ -166,9 +220,22 @@ class ModelRequest(BaseModel):
         This is the "rendered permitted input" the raw-call log records: the
         content is derived from a restricted view and nothing else.
         """
-        return "\n\n".join(
-            f"### {message.role}\n{message.content}" for message in self.messages
+        rendered = "\n\n".join(
+            f"### {message.role}\n"
+            + (
+                message.content
+                if message.content is not None and not message.tool_calls
+                else json.dumps(message.wire_dict(), ensure_ascii=False, sort_keys=True)
+            )
+            for message in self.messages
         )
+        if self.tools:
+            rendered += "\n\n### tools\n" + json.dumps(
+                [tool.model_dump(mode="json") for tool in self.tools],
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        return rendered
 
 
 class ModelResponse(BaseModel):
@@ -185,9 +252,6 @@ class ModelResponse(BaseModel):
     request_id: str | None = None
     usage: TokenUsage | None = None
     finish_reason: str | None = None
-    reasoning_content: str | None = Field(default=None, exclude_if=lambda v: v is None)
-    reasoning_observation: dict | None = Field(default=None, exclude_if=lambda v: v is None)
-    provider_response: dict | None = Field(default=None, exclude_if=lambda v: v is None)
     """Why the provider stopped generating, when it says.
 
     ``"stop"`` means the model finished its answer. ``"length"`` means it was cut
@@ -202,6 +266,14 @@ class ModelResponse(BaseModel):
     here: what to do about a truncation is the caller's decision, not the
     adapter's.
     """
+    reasoning_content: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    reasoning_observation: dict | None = Field(default=None, exclude_if=lambda v: v is None)
+    provider_response: dict | None = Field(default=None, exclude_if=lambda v: v is None)
+    tool_calls: tuple[ModelToolCall, ...] = Field(
+        default=(),
+        exclude_if=lambda value: not value,
+    )
+    """Provider-normalized structured tool calls, if any."""
 
     @property
     def truncated(self) -> bool:

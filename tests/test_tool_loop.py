@@ -416,6 +416,21 @@ def test_the_surface_advertises_the_same_limit_the_loop_enforces():
     assert str(MAX_TOOL_ROUNDS) in text
 
 
+def test_native_surface_uses_provider_tools_and_separate_pagination_action():
+    from pilot01.source.pagination import PAGED_SOURCE_TOOL_NAMES
+
+    text = render_tool_surface(
+        names=PAGED_SOURCE_TOOL_NAMES,
+        available=True,
+        protocol_version="native-v1",
+    )
+    assert "`search_contract(query, target_category)`" in text
+    assert "`next_search_page(cursor)`" in text
+    assert "native tool interface" in text
+    assert 'reply with exactly this JSON object' not in text
+    assert '{"tool_request"' not in text
+
+
 def test_a_refusal_is_rendered_without_advice():
     """Told what failed and why; not told what to ask for instead."""
     result, _, _ = drive((search(), open_span("bogus-id"), answer()))

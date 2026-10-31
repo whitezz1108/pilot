@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .client import ModelClientError
 from .openai_compat import OpenAICompatibleClient, _urlopen_transport
+from .tool_protocol import ToolTransport
 
 
 class EndpointSettings(BaseModel):
@@ -31,6 +32,7 @@ class EndpointSettings(BaseModel):
     quota_group: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]+$")
     reasoning_stream: bool = Field(default=False, exclude_if=lambda v: not v)
     reasoning_tokenizer_path: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    tool_transport: ToolTransport = "legacy-text"
 
 
 class ExecutionSettings(BaseModel):
@@ -228,4 +230,5 @@ class PooledLiveFactory:
         return OpenAICompatibleClient(base_url=self.urls[slot],
             api_key_env=self.key_names[slot], transport=send,
             reasoning_stream=endpoint.reasoning_stream,
-            reasoning_tokenizer_path=endpoint.reasoning_tokenizer_path)
+            reasoning_tokenizer_path=endpoint.reasoning_tokenizer_path,
+            tool_transport=endpoint.tool_transport)
