@@ -1,0 +1,10 @@
+runtime_version: "3"
+max_tool_requests_per_node: 16
+page_size: 5
+excerpt_chars: 400
+tool_protocol: "2"
+validator_version: validator_v3
+verification_mode: audit_only
+prompt_version: v5
+scorer_version: "2"
+feedback_rounds: 0

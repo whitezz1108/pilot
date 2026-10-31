@@ -1,0 +1,53 @@
+conditions_version: "3"
+conditions:
+  A0V0D0:
+    source_access: false
+    verification_required: false
+    disclosure_level: D0
+    factorial_design: true
+  A0V0D1:
+    source_access: false
+    verification_required: false
+    disclosure_level: D1
+    factorial_design: true
+  A0V0D2:
+    source_access: false
+    verification_required: false
+    disclosure_level: D2
+    factorial_design: true
+  A1V0D0:
+    source_access: true
+    verification_required: false
+    disclosure_level: D0
+    factorial_design: true
+  A1V0D1:
+    source_access: true
+    verification_required: false
+    disclosure_level: D1
+    factorial_design: true
+  A1V0D2:
+    source_access: true
+    verification_required: false
+    disclosure_level: D2
+    factorial_design: true
+  A1V1D0:
+    source_access: true
+    verification_required: true
+    disclosure_level: D0
+    factorial_design: true
+  A1V1D1:
+    source_access: true
+    verification_required: true
+    disclosure_level: D1
+    factorial_design: true
+  A1V1D2:
+    source_access: true
+    verification_required: true
+    disclosure_level: D2
+    factorial_design: true
+main_conditions: [A0V0D0, A0V0D1, A0V0D2, A1V0D0, A1V0D1, A1V0D2, A1V1D0, A1V1D1, A1V1D2]
+excluded_conditions:
+  A0V1:
+    source_access: false
+    verification_required: true
+    reason: "Source checking cannot be required when source access is unavailable. Exclude for every D level."

@@ -119,6 +119,9 @@ def build_llm_registry(
     source: SourceLibrary,
     tool_log: ToolCallLog,
     verification_log: VerificationLog,
+    runtime=None,
+    disclosure_level=None,
+    target_categories=(),
 ) -> NodeRegistry:
     """The model-backed v1 node set: analyst loader, real manager, real compliance.
 
@@ -144,6 +147,14 @@ def build_llm_registry(
     The Analyst is still the deterministic artifact loader. It is not a model
     call in this design: the frozen memo *is* the experimental intervention.
     """
+    def make_tools(role):
+        if runtime is None:
+            return SourceTools(node=role, library=source, log=tool_log)
+        from ...source.pagination import PagedSourceTools
+        return PagedSourceTools(node=role, library=source, log=tool_log,
+                                target_categories=target_categories,
+                                top_k=runtime.page_size, excerpt_chars=runtime.excerpt_chars)
+
     return NodeRegistry(
         [
             make_analyst_node(repository),
@@ -151,14 +162,18 @@ def build_llm_registry(
                 client=manager_client,
                 params=models.for_role("manager"),
                 call_log=call_log,
-                tools=SourceTools(node="manager", library=source, log=tool_log),
+                tools=make_tools("manager"),
+                runtime=runtime,
+                disclosure_level=disclosure_level,
                 verification_log=verification_log,
             )[0],
             make_llm_compliance_node(
                 client=compliance_client,
                 params=models.for_role("compliance"),
                 call_log=call_log,
-                tools=SourceTools(node="compliance", library=source, log=tool_log),
+                tools=make_tools("compliance"),
+                runtime=runtime,
+                disclosure_level=disclosure_level,
                 verification_log=verification_log,
             )[0],
         ]

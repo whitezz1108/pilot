@@ -155,6 +155,8 @@ def make_llm_compliance_node(
     tools: SourceTools | None = None,
     verification_log: VerificationLog | None = None,
     max_tool_rounds: int = MAX_TOOL_ROUNDS,
+    runtime=None,
+    disclosure_level: str | None = None,
 ) -> tuple[Node, AgentContext]:
     """Build the real Compliance node, and the context that observes it.
 
@@ -163,6 +165,19 @@ def make_llm_compliance_node(
     but the log. ``tools`` is separate for the same reason -- see
     :func:`~pilot01.workflow.nodes.manager.make_llm_manager_node`.
     """
+
+    from ...schemas import ComplianceOutputV2
+    prompt_template = load_compliance_prompt()
+    message_builder = build_compliance_messages
+    upstream_builder = compliance_upstream_ids
+    if runtime is not None:
+        from functools import partial
+        from ...prompts import load_prompt
+        from .disclosure import build_messages, visible_upstream_ids
+        prompt_template = load_prompt("compliance", runtime.prompt_version)
+        message_builder = partial(build_messages, role="compliance", disclosure_level=disclosure_level, runtime=runtime)
+        upstream_builder = visible_upstream_ids
+        max_tool_rounds = runtime.max_tool_requests_per_node
 
     def apply(state, output) -> None:
         state.compliance_output = output
@@ -173,18 +188,20 @@ def make_llm_compliance_node(
         view_model=ComplianceInput,
         build_view=build_compliance_view,
         prompt=AgentPromptSpec(
-            system_prompt=load_compliance_prompt(),
-            build_messages=build_compliance_messages,
+            system_prompt=prompt_template,
+            build_messages=message_builder,
         ),
         repair_prompt=load_repair_prompt(),
-        output_model=ComplianceOutput,
+        output_model=ComplianceOutputV2 if runtime is not None else ComplianceOutput,
         params=params,
         client=client,
         call_log=call_log,
         apply=apply,
         tools=tools,
         verification_log=verification_log,
-        seed_upstream=compliance_upstream_ids,
+        seed_upstream=upstream_builder,
         max_tool_rounds=max_tool_rounds,
+        validator_version=runtime.validator_version if runtime is not None else None,
+        enforce_verification=runtime.verification_mode != "audit_only" if runtime is not None else True,
     )
 

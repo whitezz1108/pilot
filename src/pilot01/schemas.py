@@ -354,6 +354,14 @@ class EvidenceProvenance(BaseModel):
     verification_basis: VerificationBasis
 
 
+class EvidenceProvenanceV2(EvidenceProvenance):
+    """Explicit source roles for v4 prompts and validator v3 only."""
+    inherited_source_ids: tuple[str, ...] = ()
+    """References received upstream, whether subsequently opened or not."""
+    relied_paragraph_ids: tuple[str, ...]
+    candidate_source_ids: tuple[str, ...]
+
+
 class AgentOutput(BaseModel):
     """Common core output shared by Manager and Compliance.
 
@@ -408,6 +416,14 @@ class ComplianceOutput(AgentOutput):
     """Final decision produced by Compliance."""
 
     role: str = "compliance"
+
+
+class ManagerOutputV2(ManagerOutput):
+    evidence_provenance: EvidenceProvenanceV2
+
+
+class ComplianceOutputV2(ComplianceOutput):
+    evidence_provenance: EvidenceProvenanceV2
 
 
 # --------------------------------------------------------------------------
@@ -575,6 +591,7 @@ def build_omission_memo(
     *,
     expected_category: str | None = None,
     replacement_claim: MemoClaim | None = None,
+    allow_slot_reuse: bool = False,
 ) -> OmissionResult:
     """Build the E1 omission memo from an E0 memo by removing one claim.
 
@@ -636,12 +653,12 @@ def build_omission_memo(
         remaining = tuple(claim for claim in memo.claims if claim.claim_id != target_claim_id)
         replacement_index = None
     else:
-        if replacement_claim.claim_id == target_claim_id:
+        if replacement_claim.claim_id == target_claim_id and not allow_slot_reuse:
             raise ValueError(
                 f"replacement claim {replacement_claim.claim_id!r} is the target "
                 "claim; a replacement must be a different claim"
             )
-        if memo.claim(replacement_claim.claim_id) is not None:
+        if memo.claim(replacement_claim.claim_id) is not None and not (allow_slot_reuse and replacement_claim.claim_id == target_claim_id):
             raise ValueError(
                 f"replacement claim {replacement_claim.claim_id!r} is already in memo "
                 f"{memo.memo_id!r}; a substitution replaces the target with a claim "

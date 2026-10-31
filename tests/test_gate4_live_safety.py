@@ -13,6 +13,7 @@ substituted for by anything a test could supply.
 """
 
 from __future__ import annotations
+import re
 
 import json
 import os
@@ -462,12 +463,20 @@ def test_no_artifact_written_by_the_build_contains_the_credential(credentials):
     for path in (REPO_ROOT / "outputs").rglob("*"):
         if not path.is_file():
             continue
+        # Stream large historical packages too; allocating/decoding every archive
+        # several times in nested regression suites otherwise dominates this check.
+        assignment = re.compile(rb"(?m)^[ \t]*(?:export[ \t]+|\$env:)?PILOT01_API_KEY[ \t]*=")
         try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
+            with path.open("rb") as handle:
+                tail, first = b"", True
+                while chunk := handle.read(1024 * 1024):
+                    window = (b"" if first else b"X") + tail + chunk
+                    assert FAKE_KEY.encode() not in window, path
+                    assert assignment.search(window) is None, path
+                    tail = window[-max(256, len(FAKE_KEY) + 1):]
+                    first = False
         except OSError:
             continue
-        assert FAKE_KEY not in text, path
-        assert "PILOT01_API_KEY=" not in text, path
 
 
 def test_the_gate4_files_this_gate_added_contain_no_credential_shape():

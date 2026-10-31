@@ -15,6 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+reasoning = ["tokenizers>=0.21,<1"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

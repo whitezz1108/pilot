@@ -41,7 +41,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
     "EvidenceClass",
@@ -96,6 +96,7 @@ class EvidenceAccess(BaseModel):
     search_result_ids: tuple[str, ...] = ()
     opened_ids: tuple[str, ...] = ()
     upstream_ids: tuple[str, ...] = ()
+    search_events: tuple["SearchEvent", ...] = Field(default=(), exclude_if=lambda v: not v)
 
     @property
     def observed_ids(self) -> tuple[str, ...]:
@@ -128,6 +129,17 @@ class EvidenceAccess(BaseModel):
         )
 
 
+class SearchEvent(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    query: str
+    target_category: str | None = None
+    offset: int = 0
+    result_ids: tuple[str, ...] = ()
+
+
+EvidenceAccess.model_rebuild()
+
+
 class EvidenceLedger:
     """The mutable, per-invocation accumulator behind :class:`EvidenceAccess`.
 
@@ -141,6 +153,7 @@ class EvidenceLedger:
         self._search_result_ids: list[str] = []
         self._opened_ids: list[str] = []
         self._upstream_ids: list[str] = []
+        self._search_events: list[SearchEvent] = []
 
     @property
     def node(self) -> str:
@@ -148,9 +161,11 @@ class EvidenceLedger:
 
     # -- recording ---------------------------------------------------------
 
-    def record_search(self, query: str, paragraph_ids: Sequence[str]) -> None:
+    def record_search(self, query: str, paragraph_ids: Sequence[str], *, target_category: str | None = None, offset: int = 0) -> None:
         """Record a search this node ran, and the ids it returned."""
         self._searches.append(query)
+        if target_category is not None:
+            self._search_events.append(SearchEvent(query=query, target_category=target_category, offset=offset, result_ids=tuple(paragraph_ids)))
         for paragraph_id in paragraph_ids:
             if paragraph_id not in self._search_result_ids:
                 self._search_result_ids.append(paragraph_id)
@@ -179,6 +194,10 @@ class EvidenceLedger:
     @property
     def searches(self) -> tuple[str, ...]:
         return tuple(self._searches)
+
+    @property
+    def search_events(self) -> tuple[SearchEvent, ...]:
+        return tuple(self._search_events)
 
     @property
     def search_result_ids(self) -> tuple[str, ...]:
@@ -224,6 +243,7 @@ class EvidenceLedger:
             search_result_ids=tuple(self._search_result_ids),
             opened_ids=tuple(self._opened_ids),
             upstream_ids=tuple(self._upstream_ids),
+            search_events=tuple(self._search_events),
         )
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid

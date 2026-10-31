@@ -1,4 +1,18 @@
-# pilot01 — omission propagation in a legal multi-agent workflow (Gate 2)
+# pilot01 — contract handoff experiments
+
+本地可视化入口：双击 **启动实验操作台.cmd**，或运行 `scripts/Start-ExperimentConsole.ps1`。可选择run数量、D条件与并发，实时查看节点进度、详情并导出结果。默认预选64个run、64并发，点击开始才调用API。当前接入旧40份的D版本开发预试，详见[操作台说明](docs/experiment_console.md)。
+
+## Clean v2：检查知情程度实验
+
+2026-10-18新增[并发执行与第二个API配置](docs/concurrent_execution_v1.md)：run命令添加 `--execution-config config/execution_v1.yaml` 可启用总计32路试运行并发、账号额度分组降速和有限HTTP重试。两个key暂按共享账号额度处理，不能套用DeepSeek官方2500额度到Paratera。旧命令默认仍串行，A/V/D最终矩阵待确认，尚未启动正式实验。
+
+新版入口为 `config/experiment_v2.yaml`：D0/D1/D2 共用来源工具与 validator v3，仅改变检查规则的事前披露；每节点 16 次工具请求，单次输出上限 32768 tokens，超时 360 秒。支持 BM25 分页、中性材料审核管线、版本指纹和按完整计划统计交付。
+
+阅读 [运行与材料协议](docs/clean_v2_protocol.md)、[检查规则](docs/validator_v3_protocol.md)、[披露条件](docs/validator_disclosure_v1.md)、[搜索分页](docs/search_v2_protocol.md) 和 [指标说明](docs/metrics_v2.md)。2026-10-17 已按独立准备配置完成原40重做＋新40，共80份合同、144份memo的AI审核冻结版，入口为 `data/pilot01/clean80_v1/case_registry_v2.json`，详见 [80份数据集说明](outputs/clean80_dataset_20261017/80份合同与144份memo_说明.md)。旧 `clean_v2` 首版保留；人工复核未完成，正式实验未启动。
+
+现有 CLI 在 plan/run/score/summary 中显式传 `--profile config/experiment_v2.yaml` 使用新版；不传 profile 保留旧版入口。旧 A1V0 是允许自主核验，旧文案中的 “unused” 不代表模型未使用工具。历史实验原始材料和结果按其冻结版本解释。
+
+## 旧版 Gate 2 起始设计记录
 
 A deterministic, auditable orchestration skeleton for a research pilot on how an
 **upstream omission error** propagates or gets corrected through a fixed

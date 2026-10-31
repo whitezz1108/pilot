@@ -222,6 +222,7 @@ def record_call(
     """
     return ModelCallRecord(
         call_index=index,
+        model_call_id=request.model_call_id,
         run_id=request.run_id,
         role=request.role,
         invocation=request.invocation,
@@ -237,7 +238,12 @@ def record_call(
         request_id=getattr(response, "request_id", None),
         usage=getattr(response, "usage", None),
         finish_reason=getattr(response, "finish_reason", None),
+        response_model_id=getattr(response, "model_id", None),
+        visible_response_characters=len(response.text) if response is not None else None,
         raw_response=getattr(response, "text", None),
+        reasoning_content=getattr(response, "reasoning_content", None),
+        reasoning_observation=getattr(response, "reasoning_observation", None),
+        provider_response=getattr(response, "provider_response", None),
         parsed_output=parsed_output,
         parse_error=parse_error,
         error=error,
@@ -292,6 +298,7 @@ def call_structured(
                     attempt=0,
                     is_repair=False,
                     error=f"{type(exc).__name__}: {exc}",
+                    response=getattr(exc, "partial_response", None),
                 )
             )
             raise
@@ -370,6 +377,7 @@ def call_structured(
                 is_repair=True,
                 repair_reason=first_error,
                 error=f"{type(exc).__name__}: {exc}",
+                response=getattr(exc, "partial_response", None),
             )
         )
         raise

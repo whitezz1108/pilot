@@ -1,4 +1,4 @@
-"""Executing a plan: one run at a time, one directory each, nothing overwritten.
+"""Executing a plan: isolated runs, one directory each, nothing overwritten.
 
 The batch runner is deliberately thin. It does not decide anything experimental:
 it takes a :class:`~pilot01.experiment.runspec.RunPlan`, and for each job builds
@@ -10,11 +10,9 @@ runs happen, in what order, and what they leave behind.
 
 Four rules, each of which is a decision rather than an implementation detail:
 
-**Serial, in plan order.** No multiprocessing, no threads, no reordering. The
-plan's order *is* the randomization, so a runner that shuffled or parallelised
-would destroy the property the plan exists to establish. Serial execution is
-also what makes one run's failure diagnosable without disentangling it from
-another's.
+**Serial by default; bounded concurrency is explicit.** Jobs are submitted in
+randomized plan order, with isolated state and logs. Completion order may
+differ. Scheduling is audited and returned results remain in plan order.
 
 **A run is never overwritten.** A directory holding ``run.json`` is a completed
 observation. Re-running it silently would replace an observation with a second
@@ -41,6 +39,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -291,7 +290,7 @@ class ScriptedClientFactory:
 
 
 class ExperimentRunner:
-    """Runs every job of a plan, serially, into one raw tree."""
+    """Runs a plan into one raw tree with optional bounded concurrency."""
 
     def __init__(
         self,
@@ -305,6 +304,7 @@ class ExperimentRunner:
         paths: ExperimentPaths,
         clock: Callable[[], datetime] | None = None,
         progress: Callable[[int, int, JobResult], None] | None = None,
+        profile=None,
     ) -> None:
         self._plan = plan
         self._registry = registry
@@ -315,6 +315,7 @@ class ExperimentRunner:
         self._paths = paths
         self._clock = clock
         self._progress = progress
+        self._profile = profile
 
     @property
     def plan(self) -> RunPlan:
@@ -330,6 +331,9 @@ class ExperimentRunner:
         resume: bool = False,
         rerun_failed: bool = False,
         fail_fast: bool = False,
+        max_workers: int = 1,
+        selected_run_ids: Sequence[str] | None = None,
+        stop_event=None,
     ) -> BatchResult:
         """Execute the plan.
 
@@ -340,6 +344,8 @@ class ExperimentRunner:
         useful when bringing up a live provider, where the first failure
         usually explains all of them.
         """
+        if isinstance(max_workers, bool) or not isinstance(max_workers, int) or max_workers < 1:
+            raise BatchError("max_workers must be a positive integer")
         if rerun_failed and not resume:
             raise BatchError(
                 "rerun_failed requires resume: re-running failed jobs while "
@@ -349,12 +355,37 @@ class ExperimentRunner:
         # A plan read back from disk is an input like any other, and gets the
         # same scrutiny as one just built.
         self._plan.check(self._conditions, self._registry)
+        if self._plan.runtime_config is not None:
+            if self._profile is None or self._profile.fingerprint() != self._plan.profile_fingerprint:
+                raise BatchError("v2 execution requires the unchanged frozen experiment profile")
+            if self._profile.runtime != self._plan.runtime_config or self._models != self._profile.models:
+                raise BatchError("v2 runtime or model parameters differ from the frozen profile")
+            if self._workflow != self._profile.workflow or self._conditions != self._profile.conditions:
+                raise BatchError("v2 workflow or conditions differ from the frozen profile")
+            from .runspec import model_fingerprint
+            fingerprint = model_fingerprint(self._models)
+            if self._plan.model_fingerprint != fingerprint or any(j.model_fingerprint != fingerprint for j in self._plan.jobs):
+                raise BatchError("v2 plan model fingerprint differs from execution parameters")
+            if any(self._registry.get(cid).policy != self._profile.policy for cid in self._plan.case_ids):
+                raise BatchError("v2 case policy differs from the frozen policy profile")
 
         self._paths.ensure()
         results: list[JobResult] = []
-        total = len(self._plan.jobs)
+        if selected_run_ids is None:
+            jobs = self._plan.jobs
+        else:
+            selected = set(selected_run_ids)
+            if not selected or len(selected) != len(selected_run_ids) or not selected.issubset(self._plan.run_ids):
+                raise BatchError("selected_run_ids must be nonempty unique IDs from the unchanged full plan")
+            jobs = tuple(job for job in self._plan.jobs if job.run_id in selected)
+        total = len(jobs)
 
-        for position, job in enumerate(self._plan.jobs, start=1):
+        if max_workers > 1:
+            return self._run_parallel(max_workers, resume, rerun_failed, fail_fast, jobs, stop_event)
+
+        for position, job in enumerate(jobs, start=1):
+            if stop_event is not None and stop_event.is_set():
+                break
             result = self._run_one(job, resume=resume, rerun_failed=rerun_failed)
             results.append(result)
             if self._progress is not None:
@@ -367,6 +398,60 @@ class ExperimentRunner:
             plan_fingerprint=self._plan.fingerprint(),
             results=tuple(results),
         )
+
+    def _run_parallel(self, workers, resume, rerun_failed, fail_fast, selected_jobs, stop_event):
+        """Bound in-flight jobs; fresh state/logs per job; results stay in plan order.
+
+        Submission follows the randomized plan. Completion order is allowed to
+        differ. On failure stop submitting, then drain already running jobs.
+        """
+        from datetime import timezone
+        from uuid import uuid4
+        log_path = self._paths.batch_index_json.parent / f"schedule_{uuid4().hex}.jsonl"
+        results = {}
+        plan_indices = {job.run_id: i for i, job in enumerate(self._plan.jobs)}
+        jobs = iter((plan_indices[job.run_id], job) for job in selected_jobs)
+        pending = {}
+        stopped = False
+        with log_path.open("x", encoding="utf-8") as log, ThreadPoolExecutor(max_workers=workers) as pool:
+            def event(kind, index, job):
+                log.write(json.dumps(dict(event=kind, plan_index=index,
+                    run_id=job.run_id, max_workers=workers,
+                    at=datetime.now(timezone.utc).isoformat())) + "\n")
+                log.flush()
+
+            def submit():
+                if stop_event is not None and stop_event.is_set():
+                    return False
+                item = next(jobs, None)
+                if item is None:
+                    return False
+                index, job = item
+                event("submitted", index, job)
+                pending[pool.submit(self._run_one, job, resume=resume,
+                    rerun_failed=rerun_failed)] = (index, job)
+                return True
+
+            for _ in range(min(workers, len(selected_jobs))):
+                submit()
+            while pending:
+                done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                # Process the entire completed group before submitting more work.
+                for future in sorted(done, key=lambda f: pending[f][0]):
+                    index, job = pending.pop(future)
+                    result = future.result()
+                    results[index] = result
+                    event(result.status.value, index, job)
+                    if self._progress:
+                        self._progress(len(results), len(selected_jobs), result)
+                    if fail_fast and result.status is JobStatus.FAILED:
+                        stopped = True
+                if not stopped:
+                    while len(pending) < workers and submit():
+                        pass
+        return BatchResult(experiment_id=self._plan.experiment_id,
+            plan_fingerprint=self._plan.fingerprint(),
+            results=tuple(results[i] for i in sorted(results)))
 
     # -- one job -----------------------------------------------------------
 
@@ -455,6 +540,9 @@ class ExperimentRunner:
             source=self._registry.library,
             tool_log=tool_log,
             verification_log=verification_log,
+            runtime=self._plan.runtime_config,
+            disclosure_level=self._conditions.get(job.condition_id).disclosure_level,
+            target_categories=case.policy.target_clause_categories,
         )
         runner = WorkflowRunner(
             workflow=self._workflow,
@@ -493,7 +581,7 @@ class ExperimentRunner:
         directory.write_events(execution)
 
         artifact = RunArtifact(
-            validator_version=VALIDATOR_VERSION,
+            validator_version=self._plan.runtime_config.validator_version if self._plan.runtime_config else VALIDATOR_VERSION,
             experiment_id=job.experiment_id,
             run_id=job.run_id,
             case_id=job.case_id,
@@ -507,6 +595,9 @@ class ExperimentRunner:
             plan_fingerprint=self._plan.fingerprint(),
             models_version=job.models_version,
             model_fingerprint=job.model_fingerprint,
+            runtime_config=self._plan.runtime_config.model_dump() if self._plan.runtime_config else None,
+            profile_fingerprint=self._plan.profile_fingerprint,
+            disclosure_level=self._conditions.get(job.condition_id).disclosure_level,
             execution=execution,
             failure=failure,
             model_calls=len(call_log.records),

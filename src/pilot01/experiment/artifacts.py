@@ -192,7 +192,8 @@ def derive_failure(
     # produced an object the schema accepted. A transport error counts too --
     # both are "the model did not answer", as opposed to "the answer was
     # rejected".
-    model_output_failure = protocol_failure and not verification_failures and any(
+    verification_blocked = "did not meet the verification requirement" in (error or "")
+    model_output_failure = protocol_failure and not verification_blocked and any(
         record.parse_error or record.error for record in model_calls
     )
 
@@ -252,6 +253,9 @@ class RunArtifact(BaseModel):
     plan_fingerprint: str
     models_version: str
     model_fingerprint: str
+    runtime_config: dict | None = Field(default=None, exclude_if=lambda v: v is None)
+    profile_fingerprint: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    disclosure_level: str | None = Field(default=None, exclude_if=lambda v: v is None)
 
     execution: ExecutionRecord
     failure: FailureRecord | None = None

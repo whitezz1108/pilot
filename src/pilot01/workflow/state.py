@@ -20,6 +20,8 @@ Two structural protections live here:
 
 from __future__ import annotations
 
+from ..schemas import ManagerOutputV2, ComplianceOutputV2
+
 from collections.abc import Mapping
 from datetime import datetime
 from enum import Enum
@@ -103,8 +105,8 @@ class ExperimentState(BaseModel):
     hidden: HiddenExperimentData = Field(frozen=True)
 
     # -- outputs (mutable: written by the runner) --------------------------
-    manager_output: ManagerOutput | None = None
-    compliance_output: ComplianceOutput | None = None
+    manager_output: ManagerOutputV2 | ManagerOutput | None = None
+    compliance_output: ComplianceOutputV2 | ComplianceOutput | None = None
 
     # -- workflow position -------------------------------------------------
     current_node: str = ""
@@ -251,7 +253,11 @@ class ExperimentState(BaseModel):
         # The e0 -> e1 count relation is a property of the record alone and is
         # checked there, so that a deletion and a substitution cannot be
         # confused for one another in one place and not the other.
-        if self.analyst_memo.claim(omission.omitted_claim_id) is not None:
+        if self.analyst_memo.claim(omission.omitted_claim_id) is not None and not (
+            self.experiment_version in ("2", "3") and omission.is_substitution
+            and omission.replacement_claim_id == omission.omitted_claim_id
+            and omission.replacement_category != omission.omitted_claim_category
+        ):
             raise TreatmentIntegrityError(
                 f"E1 memo still contains the omitted claim {omission.omitted_claim_id!r}"
             )

@@ -43,7 +43,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .client import ModelParams, TokenUsage
+from .client import ModelParams, PreparationModelParams, TokenUsage
 
 __all__ = [
     "SecretLeakError",
@@ -93,12 +93,13 @@ class ModelCallRecord(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     call_index: int = Field(ge=0, description="Dense, monotonic, per-log sequence.")
+    model_call_id: str | None = Field(default=None, exclude_if=lambda v: v is None)
     run_id: str | None = None
     role: str
     invocation: int = Field(ge=0)
     prompt_version: str
 
-    params: ModelParams
+    params: ModelParams | PreparationModelParams
     """Provider, exact model id, temperature, top_p, max output tokens, timeout."""
 
     rendered_input: str
@@ -115,6 +116,8 @@ class ModelCallRecord(BaseModel):
     request_id: str | None = None
     usage: TokenUsage | None = None
     finish_reason: str | None = None
+    response_model_id: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    visible_response_characters: int | None = Field(default=None, exclude_if=lambda v: v is None)
     """Why the provider stopped, when it reports it.
 
     ``"length"`` records that this call was cut off at ``max_output_tokens``.
@@ -124,6 +127,9 @@ class ModelCallRecord(BaseModel):
     """
 
     raw_response: str | None = None
+    reasoning_content: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    reasoning_observation: dict | None = Field(default=None, exclude_if=lambda v: v is None)
+    provider_response: dict | None = Field(default=None, exclude_if=lambda v: v is None)
     """The provider's response text, unmodified."""
     parsed_output: dict[str, Any] | None = None
     """The validated domain object, or ``None`` when parsing failed."""

@@ -51,6 +51,7 @@ from ...model import (
     ModelCallLog,
     ModelClient,
     ModelClientError,
+    ModelOutputError,
     ModelMessage,
     ModelRequest,
     RepairSpec,
@@ -92,6 +93,8 @@ before dispatch rather than after. What the prompt advertises ("at most
 """
 
 TOOL_REQUEST_KEY = "tool_request"
+NO_TOOL_REQUEST = object()
+"""Distinguish an absent request from an explicitly malformed null request."""
 
 
 class ToolLoopError(ProtocolError):
@@ -106,9 +109,9 @@ class ToolLoopError(ProtocolError):
 def extract_tool_request(text: str) -> Any | None:
     """Return the ``tool_request`` body if this response is a tool request.
 
-    ``None`` means "not a tool request", which is the signal to treat the
+    ``NO_TOOL_REQUEST`` means "not a tool request", which is the signal to treat the
     response as a candidate final answer. A response with no JSON object at all
-    is also ``None``: it is a malformed answer, and the structured-output path
+    is also ``NO_TOOL_REQUEST``: it is a malformed answer, and the structured-output path
     is where malformed answers are diagnosed and repaired.
 
     A response whose ``tool_request`` is present but not an object is returned
@@ -118,13 +121,13 @@ def extract_tool_request(text: str) -> Any | None:
     try:
         payload = json.loads(extract_json_object(text))
     except (ValueError, json.JSONDecodeError):
-        return None
+        return NO_TOOL_REQUEST
     if not isinstance(payload, dict) or TOOL_REQUEST_KEY not in payload:
-        return None
+        return NO_TOOL_REQUEST
     return payload[TOOL_REQUEST_KEY]
 
 
-def render_tool_surface(*, names: Sequence[str], available: bool) -> str:
+def render_tool_surface(*, names: Sequence[str], available: bool, max_tool_rounds: int = MAX_TOOL_ROUNDS, protocol_version: str = "1") -> str:
     """Describe the tool surface a node is being offered.
 
     ``names`` comes from the tool layer itself and ``available`` from the view's
@@ -141,20 +144,28 @@ def render_tool_surface(*, names: Sequence[str], available: bool) -> str:
         return "No source tools are available to you in this workflow."
     lines = ["You may use these source tools:"]
     for name in names:
-        arguments = ", ".join(TOOL_ARGUMENTS[name])
+        arguments = ("query, target_category, cursor (optional)" if protocol_version == "2" and name == "search_contract"
+                     else ", ".join(TOOL_ARGUMENTS[name]))
         lines.append(f"- `{name}({arguments})`")
     lines.extend(
         [
             "",
             "To use one, reply with exactly this JSON object and nothing else:",
             f'{{"{TOOL_REQUEST_KEY}": {{"tool": "<tool name>", '
-            '"arguments": {"<argument>": "<value>"}}}}',
+            '"arguments": {"<argument>": "<value>"}}}',
             "",
             "You will then receive the tool's result, and may either request "
             "another tool or reply with your final answer. You may request at "
-            f"most {MAX_TOOL_ROUNDS} tools.",
+            f"most {max_tool_rounds} tools.",
         ]
     )
+    if protocol_version == "2":
+        lines.extend([
+            "Search returns five ranked snippets by default. Use the returned next_cursor with the same query and target_category to read the next page.",
+            "One request names one policy target. A snippet is not a full source opening. Repeating the first-page query returns a notice, not new passages.",
+            "If several candidates are irrelevant, consider a more specific reformulation rather than repeatedly requesting the same page. Empty results do not establish absence.",
+            "Search, paging, open and failed tool requests all consume the shared allowance. Open with open_source_span(paragraph_id).",
+        ])
     return "\n".join(lines)
 
 
@@ -176,6 +187,11 @@ def render_tool_result(outcome: ToolOutcome) -> str:
         return "\n".join(lines)
 
     if outcome.tool == "search_contract":
+        # Protocol v2 pagination metadata is part of the tool result, including
+        # empty/repeated pages. Preserve it before any early return.
+        if "has_more" in outcome.payload:
+            lines.append(json.dumps(outcome.payload, ensure_ascii=False))
+            return "\n".join(lines)
         results = outcome.payload.get("results", [])
         lines.append(f"results: {len(results)}")
         if not results:
@@ -282,13 +298,19 @@ def run_tool_loop(
                     attempt=0,
                     is_repair=False,
                     error=f"{type(exc).__name__}: {exc}",
+                    response=getattr(exc, "partial_response", None),
                 )
             )
             raise
 
+        # A truncated tool-shaped response is not a valid instruction to dispatch.
+        if getattr(response, "finish_reason", None) == "length":
+            emit(record_call(index=call_index, request=request, prompt_version=request.prompt_version,
+                             attempt=0, is_repair=False, response=response, parse_error="output_truncated"))
+            raise ModelOutputError(f"output limit ({request.params.max_output_tokens} tokens, finish_reason='length'); no repair attempted")
         envelope = extract_tool_request(response.text)
 
-        if envelope is None:
+        if envelope is NO_TOOL_REQUEST:
             # Not a tool request: this is the answer, or a malformed attempt at
             # one. Hand the response to the structured path, which owns
             # validation and the single format-only repair. It writes into a
@@ -350,7 +372,10 @@ def run_tool_loop(
         rounds += 1
 
         messages.append(ModelMessage(role="assistant", content=response.text))
-        messages.append(ModelMessage(role="user", content=render_tool_result(outcome)))
+        rendered = render_tool_result(outcome)
+        if getattr(tools, "protocol_version", "1") == "2":
+            rendered += f"\nTool requests used: {rounds}/{max_tool_rounds}; remaining: {max_tool_rounds - rounds}."
+        messages.append(ModelMessage(role="user", content=rendered))
 
 
 def _dispatch(
@@ -377,10 +402,12 @@ def _dispatch(
             call_index=call_index,
             invocation=request.invocation,
             run_id=request.run_id,
+            parent_model_call_id=request.model_call_id,
         )
     return tools.execute(
         tool_request,
         call_index=call_index,
         invocation=request.invocation,
         run_id=request.run_id,
+        parent_model_call_id=request.model_call_id,
     )

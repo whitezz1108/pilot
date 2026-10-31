@@ -1,0 +1,19 @@
+# Local default INT4+MTP, prefix cache disabled, null routing repaired; both roles use slot 1 on port 30000.
+models_version: local-int4-mtp-nocache-nullfix-20261030
+roles:
+  manager:
+    provider: openai-compatible
+    model_id: Qwen3.8-27B
+    temperature: 0.0
+    max_output_tokens: 32768
+    top_p: null
+    timeout_seconds: 360.0
+    reasoning_effort: xhigh
+  compliance:
+    provider: openai-compatible
+    model_id: Qwen3.8-27B
+    temperature: 0.0
+    max_output_tokens: 32768
+    top_p: null
+    timeout_seconds: 360.0
+    reasoning_effort: xhigh

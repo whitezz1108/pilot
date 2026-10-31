@@ -802,6 +802,8 @@ def score_run(
     from the registry -- never from the raw tree, which has no gold in it and
     refuses to carry any.
     """
+    if raw.artifact.validator_version == "validator_v3":
+        raise ScoringError("validator_v3 runs require plan-denominator scoring_v2; legacy scoring is not applicable")
     artifact = raw.artifact
     execution = artifact.execution
     if artifact.case_id != case.case_id:

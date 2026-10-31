@@ -1,0 +1,10 @@
+# Material generation/review only. Not part of the Manager/Compliance experiment profile.
+preparation_version: "1"
+model:
+  provider: openai-compatible
+  model_id: DeepSeek-V4.1-Flash
+  temperature: 0.0
+  # Omit max_tokens in the request. Provider defaults/limits still apply.
+  max_output_tokens: null
+  top_p: null
+  timeout_seconds: 360.0

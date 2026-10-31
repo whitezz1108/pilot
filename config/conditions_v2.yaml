@@ -1,0 +1,19 @@
+conditions_version: "2"
+conditions:
+  D0:
+    source_access: true
+    verification_required: true
+    disclosure_level: D0
+    description: "No explicit notice of the submission check."
+  D1:
+    source_access: true
+    verification_required: true
+    disclosure_level: D1
+    description: "Notice of checking without the checklist."
+  D2:
+    source_access: true
+    verification_required: true
+    disclosure_level: D2
+    description: "Notice and full procedural checklist."
+main_conditions: [D0, D1, D2]
+excluded_conditions: {}

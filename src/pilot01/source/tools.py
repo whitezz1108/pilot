@@ -35,7 +35,10 @@ the timestamps. The log is the record; a ledger can be replayed from it.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from datetime import datetime
+from datetime import datetime, timezone
+from functools import wraps
+from time import perf_counter
+from uuid import uuid4
 from pathlib import Path
 from typing import Any
 
@@ -191,6 +194,11 @@ class ToolCallRecord(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     sequence: int = Field(ge=0, description="Dense, monotonic, per-log sequence.")
+    tool_call_id: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    parent_model_call_id: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    latency_seconds: float | None = Field(default=None, ge=0, exclude_if=lambda v: v is None)
+    source_version: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    result_locators: list[dict[str, Any]] | None = Field(default=None, exclude_if=lambda v: v is None)
     call_index: int = Field(ge=0, description="The model call this tool call answers.")
     run_id: str | None = None
     node: str
@@ -204,6 +212,7 @@ class ToolCallRecord(BaseModel):
     error: str | None = None
     requested_at: datetime | None = None
     responded_at: datetime | None = None
+    page_metadata: dict[str, Any] | None = Field(default=None, exclude_if=lambda v: v is None)
 
     def to_jsonl(self) -> str:
         return self.model_dump_json() + "\n"
@@ -301,6 +310,26 @@ class SourceLibrary:
         return tuple(self._documents)
 
 
+def timed_tool(method):
+    """Measure the outer dispatch, including validation failures and paged search."""
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        if self._timing is not None:
+            return method(self, *args, **kwargs)
+        self._timing = (self._clock(), perf_counter())
+        before = len(self._log.records)
+        try:
+            return method(self, *args, **kwargs)
+        except Exception as exc:
+            if method.__name__ == "_invoke" and len(self._log.records) == before:
+                self._emit(ToolOutcome(tool=args[0], arguments=args[1], ok=False,
+                                       error="tool execution raised " + type(exc).__name__))
+            raise
+        finally:
+            self._timing = None
+    return wrapped
+
+
 class SourceTools:
     """The two read-only source tools, for one agent node, in one run."""
 
@@ -319,7 +348,9 @@ class SourceTools:
         self._log = log if log is not None else ToolCallLog()
         self._top_k = top_k
         self._excerpt_chars = excerpt_chars
-        self._clock = clock
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._timing = None
+        self._parent_model_call_id = None
         self._ledger = EvidenceLedger(node=node)
         self._contract_id: str | None = None
         self._document: ContractDocument | None = None
@@ -432,6 +463,7 @@ class SourceTools:
         call_index: int,
         invocation: int,
         run_id: str | None = None,
+        parent_model_call_id: str | None = None,
     ) -> ToolOutcome:
         """Run one validated tool request and log the outcome.
 
@@ -440,14 +472,15 @@ class SourceTools:
         a third tool or passes an argument nobody defined gets a refusal it can
         read and act on, not a traceback.
         """
-        previous = (self._call_index, self._invocation, self._run_id)
-        self._call_index, self._invocation, self._run_id = call_index, invocation, run_id
+        previous = (self._call_index, self._invocation, self._run_id, self._parent_model_call_id)
+        self._call_index, self._invocation, self._run_id, self._parent_model_call_id = call_index, invocation, run_id, parent_model_call_id
         try:
             outcome, _ = self._invoke(request.tool, dict(request.arguments))
             return outcome
         finally:
-            self._call_index, self._invocation, self._run_id = previous
+            self._call_index, self._invocation, self._run_id, self._parent_model_call_id = previous
 
+    @timed_tool
     def reject(
         self,
         *,
@@ -457,16 +490,17 @@ class SourceTools:
         call_index: int,
         invocation: int,
         run_id: str | None = None,
+        parent_model_call_id: str | None = None,
     ) -> ToolOutcome:
         """Log a request that never reached a tool, because its envelope was malformed."""
-        previous = (self._call_index, self._invocation, self._run_id)
-        self._call_index, self._invocation, self._run_id = call_index, invocation, run_id
+        previous = (self._call_index, self._invocation, self._run_id, self._parent_model_call_id)
+        self._call_index, self._invocation, self._run_id, self._parent_model_call_id = call_index, invocation, run_id, parent_model_call_id
         try:
             return self._emit(
                 ToolOutcome(tool=tool, arguments=dict(arguments or {}), ok=False, error=error)
             )
         finally:
-            self._call_index, self._invocation, self._run_id = previous
+            self._call_index, self._invocation, self._run_id, self._parent_model_call_id = previous
 
     # -- internals ---------------------------------------------------------
 
@@ -482,6 +516,7 @@ class SourceTools:
             )
         return self._document, self._index
 
+    @timed_tool
     def _invoke(self, tool: str, arguments: dict[str, Any]) -> tuple[ToolOutcome, Any]:
         """Check, run, and log one tool call. The single logging point.
 
@@ -574,10 +609,24 @@ class SourceTools:
         )
 
     def _emit(self, outcome: ToolOutcome) -> ToolOutcome:
-        now = self._clock() if self._clock is not None else None
+        now = self._clock()
+        start, monotonic_start = self._timing or (now, perf_counter())
+        result_metadata = {r["paragraph_id"]:r for r in outcome.payload.get("results", [])} if outcome.payload else {}
+        locators = []
+        for rank, pid in enumerate(outcome.result_ids, 1):
+            paragraph = self._document.paragraph(pid) if self._document else None
+            result = result_metadata.get(pid, {})
+            locators.append(dict(paragraph_id=pid, rank=result.get("rank", rank), score=result.get("score"),
+                                 start_char=paragraph.start_char if paragraph else None,
+                                 end_char=paragraph.end_char if paragraph else None))
         self._log.append(
             ToolCallRecord(
                 sequence=len(self._log),
+                tool_call_id=uuid4().hex,
+                parent_model_call_id=self._parent_model_call_id,
+                source_version=self._document.text_hash if self._document else None,
+                result_locators=locators,
+                latency_seconds=max(0, perf_counter() - monotonic_start),
                 call_index=self._call_index,
                 run_id=self._run_id,
                 node=self._node,
@@ -588,8 +637,12 @@ class SourceTools:
                 ok=outcome.ok,
                 result_ids=outcome.result_ids,
                 error=outcome.error,
-                requested_at=now,
+                requested_at=start,
                 responded_at=now,
+                page_metadata=(
+                    {k: v for k, v in outcome.payload.items() if k != "results"}
+                    if getattr(self, "protocol_version", "1") == "2" and outcome.tool == SEARCH_CONTRACT else None
+                ),
             )
         )
         return outcome
@@ -636,7 +689,9 @@ def replay_ledger(
             for paragraph_id in record.result_ids:
                 ledger.record_open(paragraph_id)
         elif record.tool == SEARCH_CONTRACT:
-            ledger.record_search(str(record.arguments.get("query", "")), record.result_ids)
+            ledger.record_search((record.page_metadata or {}).get("query", str(record.arguments.get("query", ""))), record.result_ids,
+                                 target_category=record.arguments.get("target_category"),
+                                 offset=(record.page_metadata or {}).get("offset", 0))
     return ledger
 
 

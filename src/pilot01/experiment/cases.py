@@ -107,6 +107,7 @@ class CaseSpec(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     case_id: str
+    material_version: str | None = Field(default=None, exclude_if=lambda v: v is None)
     contract_id: str
     contract_text: str
     """The contract, verbatim. Read and sliced by the source layer, never written to."""
@@ -256,7 +257,9 @@ class CaseSpec(BaseModel):
                 )
             if self.omission_replacement_claim is not None:
                 replacement = self.omission_replacement_claim
-                if self.memo.claim(replacement.claim_id) is not None:
+                if self.memo.claim(replacement.claim_id) is not None and not (
+                    self.material_version == "2" and replacement.claim_id == self.omission_target_claim_id
+                ):
                     raise CaseRegistryError(
                         f"case {self.case_id!r} replaces the omitted claim with "
                         f"{replacement.claim_id!r}, which the E0 memo already holds; a "
@@ -392,6 +395,7 @@ class CaseRegistry:
                     case.omission_target_claim_id or "",
                     expected_category=case.target_category,
                     replacement_claim=case.omission_replacement_claim,
+                    allow_slot_reuse=case.material_version == "2",
                 )
                 memos[(case.case_id, ErrorCondition.E1)] = derived.memo
                 omissions[case.case_id] = derived.provenance

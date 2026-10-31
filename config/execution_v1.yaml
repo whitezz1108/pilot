@@ -1,0 +1,14 @@
+# Trial cap, NOT a verified Paratera quota or DeepSeek official quota.
+# Same quota_group means both keys SHARE one 32-request adaptive gate.
+max_parallel_runs: 32
+http_retries: 2
+recovery_successes: 20
+endpoints:
+  - slot: 1
+    max_in_flight: 32
+    quota_group: shared-account
+  - slot: 2
+    max_in_flight: 32
+    quota_group: shared-account
+# Fill the second key in api.local.env before running.
+# Use different quota_group names ONLY for confirmed independent accounts/quotas.

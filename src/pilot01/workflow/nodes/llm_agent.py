@@ -190,6 +190,7 @@ class AgentContext:
     last_verification: Any = None
     last_loop: Any = None
     seed_upstream: Callable[[Any], Iterable[str]] = field(default=lambda view: ())
+    validator_version: str | None = None
 
 
 def make_llm_agent_node(
@@ -209,6 +210,8 @@ def make_llm_agent_node(
     verification_log: VerificationLog | None = None,
     seed_upstream: Callable[[Any], Iterable[str]] | None = None,
     max_tool_rounds: int = MAX_TOOL_ROUNDS,
+    validator_version: str | None = None,
+    enforce_verification: bool = True,
 ) -> tuple[Node, AgentContext]:
     """Build an LLM-backed agent node, and the context that observes it.
 
@@ -226,6 +229,7 @@ def make_llm_agent_node(
         tools=tools,
         verification_log=verification_log,
         seed_upstream=seed_upstream if seed_upstream is not None else (lambda view: ()),
+        validator_version=validator_version,
     )
 
     def build_input(state: Any, invocation: int) -> RestrictedView:
@@ -247,6 +251,10 @@ def make_llm_agent_node(
         )
 
     def audit_request(request: ModelRequest) -> None:
+        if context.validator_version == "validator_v3":
+            import re
+            if re.search(r"PILOT-(?:POS|SENT)-", request.rendered_input()):
+                raise ProtocolError("v2 request contains a label-bearing legacy identifier")
         violations = audit_keys(request.model_dump(mode="json"))
         if violations:
             raise ProtocolError(
@@ -297,7 +305,9 @@ def make_llm_agent_node(
         context.last_loop = loop
         outcome = _verify(context, view, loop.output)
         context.last_verification = outcome
-        if outcome is not None and not outcome.satisfied:
+        # Disclosure experiments observe the verdict without feeding it back
+        # to either agent or preventing an otherwise valid handoff.
+        if enforce_verification and outcome is not None and not outcome.satisfied:
             raise ProtocolError(
                 f"{name} did not meet the verification requirement of this "
                 f"condition: {outcome.describe()}"
@@ -325,7 +335,11 @@ def _verify(context: AgentContext, view: RestrictedView, output: BaseModel) -> A
     """
     if context.tools is None:
         return None
-    outcome = evaluate_verification(
+    evaluator = evaluate_verification
+    if context.validator_version == "validator_v3":
+        from ...source.verification_v3 import evaluate_verification_v3
+        evaluator = evaluate_verification_v3
+    outcome = evaluator(
         output=output,
         policy=view.policy,
         ledger=context.tools.ledger,

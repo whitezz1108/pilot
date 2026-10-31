@@ -26,10 +26,13 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
+
+from .reasoning import StreamCapture, observe_reasoning
 
 from .client import (
     ModelClientError,
@@ -75,7 +78,29 @@ def missing_credentials() -> tuple[str, ...]:
 
 def _urlopen_transport(request: urllib.request.Request, timeout: float) -> bytes:
     """The real transport. Standard library only; the sole network call site."""
+    request.pilot01_stream_capture = None
+    capture = StreamCapture() if json.loads(request.data).get("stream") else None
     with urllib.request.urlopen(request, timeout=timeout) as handle:  # noqa: S310
+        if capture is not None:
+            request.pilot01_stream_capture = capture
+            # Parse complete SSE events, not arbitrary TCP chunks. Keep partial
+            # evidence on the request if the stream fails; never retry it.
+            data = []
+            for raw_line in handle:
+                line = raw_line.decode("utf-8").rstrip("\r\n")
+                if not line:
+                    if data:
+                        capture.feed("\n".join(data))
+                        data = []
+                        if capture.done:
+                            break
+                elif line.startswith("data:"):
+                    data.append(line[5:].lstrip(" "))
+            if data:
+                capture.feed("\n".join(data))
+            if not capture.done or capture.envelope["choices"][0]["finish_reason"] is None:
+                raise ModelClientError("incomplete model SSE stream")
+            return json.dumps(capture.snapshot()).encode("utf-8")
         return handle.read()
 
 
@@ -107,6 +132,8 @@ class OpenAICompatibleClient:
         json_mode: bool = True,
         transport: Transport | None = None,
         extra_headers: Mapping[str, str] | None = None,
+        reasoning_stream: bool = False,
+        reasoning_tokenizer_path: str | None = None,
     ) -> None:
         resolved_url = base_url or os.environ.get(DEFAULT_BASE_URL_ENV)
         if not resolved_url:
@@ -126,8 +153,20 @@ class OpenAICompatibleClient:
         self._api_key = resolved_key
         self._provider = provider
         self._json_mode = json_mode
+        # Explicit opt-in for the local experiment; other providers retain JSON mode.
+        grammar_path = os.environ.get("PILOT01_JSON_OBJECT_GRAMMAR_PATH")
+        self._json_object_grammar = None
+        if json_mode and grammar_path:
+            try:
+                self._json_object_grammar = Path(grammar_path).read_text(encoding="utf-8")
+            except OSError as exc:
+                raise ModelClientError("cannot read configured JSON object grammar") from exc
+            if not self._json_object_grammar.strip():
+                raise ModelClientError("configured JSON object grammar is empty")
         self._transport: Transport = transport or _urlopen_transport
         self._extra_headers = dict(extra_headers or {})
+        self._reasoning_stream = reasoning_stream
+        self._reasoning_tokenizer_path = reasoning_tokenizer_path
 
     @property
     def provider(self) -> str:
@@ -153,12 +192,26 @@ class OpenAICompatibleClient:
                 for message in request.messages
             ],
             "temperature": params.temperature,
-            "max_tokens": params.max_output_tokens,
         }
+        if params.max_output_tokens is not None:
+            payload["max_tokens"] = params.max_output_tokens
+        if params.reasoning_effort is not None:
+            payload["reasoning_effort"] = params.reasoning_effort
         if params.top_p is not None:
             payload["top_p"] = params.top_p
         if self._json_mode:
-            payload["response_format"] = {"type": "json_object"}
+            if self._json_object_grammar is not None:
+                payload["ebnf"] = self._json_object_grammar
+            else:
+                payload["response_format"] = {"type": "json_object"}
+        if self._reasoning_stream:
+            payload["stream"] = True
+            payload["stream_options"] = {"include_usage": True}
+
+        if os.environ.get('PILOT01_STRICT_TOOL_PROTOCOL') == '1':
+            from .protocol_constraints import build_schema, compile_grammar
+            payload.pop('response_format', None)
+            payload['ebnf'] = compile_grammar(build_schema(payload['messages'], request.role))
 
         headers = {
             "Content-Type": "application/json",
@@ -182,6 +235,8 @@ class OpenAICompatibleClient:
                 "expected ModelRequest"
             )
         http_request = self.build_request(request)
+        # Local transport metadata only; never a header or a provider parameter.
+        http_request.pilot01_model_call_id = request.model_call_id
         requested_at = datetime.now(timezone.utc)
 
         try:
@@ -193,21 +248,49 @@ class OpenAICompatibleClient:
                 f"{self.endpoint}: {detail}"
             ) from exc
         except urllib.error.URLError as exc:
-            raise ModelClientError(
+            error = ModelClientError(
                 f"could not reach the model endpoint {self.endpoint}: "
                 f"{_redact(str(exc.reason), self._api_key)}"
-            ) from exc
+            )
+            self._attach_partial(error, http_request, request, requested_at)
+            raise error from exc
         except TimeoutError as exc:
-            raise ModelClientError(
+            error = ModelClientError(
                 f"model endpoint {self.endpoint} timed out after "
                 f"{request.params.timeout_seconds}s"
-            ) from exc
+            )
+            self._attach_partial(error, http_request, request, requested_at)
+            raise error from exc
+        except (ModelClientError, ValueError, OSError) as exc:
+            error = ModelClientError(f"model stream failed: {type(exc).__name__}")
+            self._attach_partial(error, http_request, request, requested_at)
+            raise error from exc
 
         responded_at = datetime.now(timezone.utc)
         envelope = self._decode(body)
+        return self._response(envelope, http_request, request, requested_at, responded_at)
+
+    def _attach_partial(self, error, http_request, request, requested_at):
+        capture = getattr(http_request, "pilot01_stream_capture", None)
+        if capture is not None:
+            error.partial_response = self._response(capture.snapshot(), http_request, request,
+                                                    requested_at, datetime.now(timezone.utc))
+
+    def _response(self, envelope, http_request, request, requested_at, responded_at):
+        capture = getattr(http_request, "pilot01_stream_capture", None)
+        text = self._extract_text(envelope)
+        # Remove an echoed credential before any newly retained provider payload
+        # reaches the log. The log's existing secret scanner still applies.
+        envelope = json.loads(_redact(json.dumps(envelope), self._api_key))
+        reasoning, observation = observe_reasoning(envelope,
+            timing=capture.timing() if capture is not None else None,
+            tokenizer_path=self._reasoning_tokenizer_path)
+        provider_response = dict(envelope)
+        if capture is not None:
+            provider_response["stream_events"] = json.loads(_redact(json.dumps(capture.events), self._api_key))
 
         return ModelResponse(
-            text=self._extract_text(envelope),
+            text=text,
             provider=self._provider,
             model_id=str(envelope.get("model") or request.params.model_id),
             requested_at=requested_at,
@@ -215,6 +298,9 @@ class OpenAICompatibleClient:
             request_id=envelope.get("id"),
             usage=self._extract_usage(envelope),
             finish_reason=self._extract_finish_reason(envelope),
+            reasoning_content=reasoning,
+            reasoning_observation=observation,
+            provider_response=provider_response,
         )
 
     # -- response decoding --------------------------------------------------
@@ -248,6 +334,8 @@ class OpenAICompatibleClient:
             )
         message = choices[0].get("message") or {}
         content = message.get("content")
+        if content is None and isinstance(message.get("reasoning_content"), str):
+            return ""  # Preserve reasoning-only/truncated responses for auditing.
         if isinstance(content, str):
             return content
         if isinstance(content, list):
@@ -282,10 +370,15 @@ class OpenAICompatibleClient:
         usage = envelope.get("usage")
         if not isinstance(usage, dict):
             return None
+        reasoning_tokens = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
+        if reasoning_tokens is None:
+            reasoning_tokens = usage.get("reasoning_tokens")
         return TokenUsage(
             prompt_tokens=usage.get("prompt_tokens"),
             completion_tokens=usage.get("completion_tokens"),
             total_tokens=usage.get("total_tokens"),
+            reasoning_tokens=reasoning_tokens,
+            cached_tokens=(usage.get("prompt_tokens_details") or {}).get("cached_tokens", usage.get("prompt_cache_hit_tokens")),
         )
 
 

@@ -39,6 +39,8 @@ them.
 
 from __future__ import annotations
 
+from ..runtime import RuntimeConfig
+
 import csv
 import hashlib
 import json
@@ -236,6 +238,11 @@ class RunPlan(BaseModel):
     models_version: str
     model_fingerprint: str
     jobs: tuple[RunSpec, ...]
+    runtime_config: RuntimeConfig | None = Field(default=None, exclude_if=lambda v: v is None)
+    profile_fingerprint: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    registry_fingerprint: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    disclosure_levels: dict[str, str] | None = Field(default=None, exclude_if=lambda v: v is None)
+    selected_error_conditions: tuple[ErrorCondition, ...] | None = Field(default=None, exclude_if=lambda v: v is None)
 
     @model_validator(mode="after")
     def _check_shape(self) -> "RunPlan":
@@ -250,6 +257,9 @@ class RunPlan(BaseModel):
         """
         if not self.jobs:
             raise RunPlanError("a run plan must contain at least one job")
+        if self.selected_error_conditions is not None and (not self.selected_error_conditions
+                or len(set(self.selected_error_conditions)) != len(self.selected_error_conditions)):
+            raise RunPlanError("selected error conditions must be nonempty and unique")
         seen: set[str] = set()
         for job in self.jobs:
             if job.run_id in seen:
@@ -304,6 +314,7 @@ class RunPlan(BaseModel):
             (case_id, error.value, condition_id, repeat)
             for case_id in self.case_ids
             for error in registry.get(case_id).error_conditions
+            if self.selected_error_conditions is None or error in self.selected_error_conditions
             for condition_id in self.condition_ids
             for repeat in range(self.repeat_count)
         }
@@ -340,6 +351,13 @@ class RunPlan(BaseModel):
             },
             sort_keys=True,
         )
+        if self.runtime_config is not None:
+            material += json.dumps({"runtime": self.runtime_config.model_dump(),
+                                    "profile": self.profile_fingerprint,
+                                    "registry": self.registry_fingerprint,
+                                    "disclosure": self.disclosure_levels}, sort_keys=True)
+        if self.selected_error_conditions is not None:
+            material += json.dumps({"selected_error_conditions": [e.value for e in self.selected_error_conditions]}, sort_keys=True)
         return "sha256:" + hashlib.sha256(material.encode("utf-8")).hexdigest()
 
     def to_payload(self) -> dict:
@@ -382,7 +400,26 @@ class RunPlan(BaseModel):
         plan read back from disk is an input like any other and gets the same
         scrutiny as one just built.
         """
+        if self.runtime_config is not None:
+            import re
+            for cid in self.case_ids:
+                case = registry.get(cid)
+                if case.material_version != "2" or not re.fullmatch(r"CASE-[0-9]{4,}", cid):
+                    raise RunPlanError("v2 requires clean neutral material_version=2 cases")
+                if case.policy.target_clause_categories != registry.get(self.case_ids[0]).policy.target_clause_categories:
+                    raise RunPlanError("v2 cases must share one target policy")
+            current = "sha256:" + hashlib.sha256(json.dumps(registry.to_payload(), sort_keys=True).encode()).hexdigest()
+            if current != self.registry_fingerprint:
+                raise RunPlanError("frozen v2 registry changed")
+            if self.disclosure_levels != {cid: conditions.get(cid).disclosure_level for cid in self.condition_ids}:
+                raise RunPlanError("frozen disclosure conditions changed")
+            if not self.profile_fingerprint:
+                raise RunPlanError("v2 requires a profile fingerprint")
+        elif any(conditions.get(cid).disclosure_level is not None for cid in self.condition_ids):
+            raise RunPlanError("disclosure conditions require an explicit runtime profile")
         for job in self.jobs:
+            if self.selected_error_conditions is not None and job.error_condition not in self.selected_error_conditions:
+                raise RunPlanError("job uses an error condition excluded by the frozen plan")
             if job.condition_id not in self.condition_ids:
                 raise RunPlanError(
                     f"job {job.run_id!r} uses condition {job.condition_id!r}, which the "
@@ -507,6 +544,9 @@ def build_run_plan(
     models: ModelsConfig,
     condition_ids: Sequence[str] | None = None,
     case_ids: Sequence[str] | None = None,
+    runtime_config: RuntimeConfig | None = None,
+    profile_fingerprint: str | None = None,
+    error_conditions: Sequence[ErrorCondition | str] | None = None,
 ) -> RunPlan:
     """Enumerate every job of one experiment, in a reproducibly randomized order.
 
@@ -543,6 +583,9 @@ def build_run_plan(
         raise RunPlanError("a run plan needs at least one case")
     for case_id in selected_cases:
         registry.get(case_id)
+    selected_errors = None if error_conditions is None else tuple(ErrorCondition(e) for e in error_conditions)
+    if selected_errors is not None and (not selected_errors or len(set(selected_errors)) != len(selected_errors)):
+        raise RunPlanError("select at least one unique error condition")
 
     fingerprint = model_fingerprint(models)
 
@@ -554,6 +597,8 @@ def build_run_plan(
     for case_id in selected_cases:
         case = registry.get(case_id)
         for error_condition in case.error_conditions:
+            if selected_errors is not None and error_condition not in selected_errors:
+                continue
             jobs: list[RunSpec] = []
             for condition_id in selected_conditions:
                 condition = conditions.get(condition_id)
@@ -583,7 +628,7 @@ def build_run_plan(
 
     ordered_blocks = [blocks[key] for key in sorted(blocks)]
     plan = RunPlan(
-        experiment_version=EXPERIMENT_VERSION,
+        experiment_version=runtime_config.runtime_version if runtime_config is not None else EXPERIMENT_VERSION,
         experiment_id=experiment_id,
         seed=seed,
         repeat_count=repeat_count,
@@ -592,6 +637,11 @@ def build_run_plan(
         models_version=models.models_version,
         model_fingerprint=fingerprint,
         jobs=tuple(_interleave(ordered_blocks, random.Random(seed))),
+        runtime_config=runtime_config,
+        profile_fingerprint=profile_fingerprint,
+        registry_fingerprint=("sha256:" + hashlib.sha256(json.dumps(registry.to_payload(), sort_keys=True).encode()).hexdigest()) if runtime_config else None,
+        disclosure_levels={cid: conditions.get(cid).disclosure_level for cid in selected_conditions} if runtime_config else None,
+        selected_error_conditions=selected_errors,
     )
     plan.check(conditions, registry)
     return plan

@@ -23,14 +23,16 @@ What the boundary guarantees, and why each part is here:
 from __future__ import annotations
 
 from datetime import datetime
+from uuid import uuid4
 from typing import Literal, Protocol, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 __all__ = [
     "ModelClientError",
     "ModelOutputError",
     "ModelParams",
+    "PreparationModelParams",
     "ModelMessage",
     "TokenUsage",
     "ModelRequest",
@@ -75,6 +77,7 @@ class ModelParams(BaseModel):
     top_p: float | None = Field(default=None, gt=0.0, le=1.0)
     """Sent only when set; ``None`` means "provider default", not 1.0."""
     timeout_seconds: float = Field(default=60.0, gt=0.0)
+    reasoning_effort: str | None = Field(default=None, min_length=1)
 
     def fingerprint(self) -> str:
         """A stable one-line identity for this parameter set."""
@@ -82,7 +85,24 @@ class ModelParams(BaseModel):
         return (
             f"{self.provider}:{self.model_id}"
             f"/T={self.temperature:g}/top_p={top_p}/max={self.max_output_tokens}"
+            + (f"/reasoning={self.reasoning_effort}" if self.reasoning_effort is not None else "")
         )
+
+
+class PreparationModelParams(ModelParams):
+    """Offline material preparation has its own provider parameters.
+
+    None omits the client output cap; provider defaults and limits still apply.
+    Experiment ModelParams continues to require an explicit positive cap.
+    """
+
+    max_output_tokens: int | None = Field(default=None, gt=0)
+
+    def fingerprint(self) -> str:
+        if self.max_output_tokens is not None:
+            return super().fingerprint()
+        top_p = "default" if self.top_p is None else f"{self.top_p:g}"
+        return f"{self.provider}:{self.model_id}/T={self.temperature:g}/top_p={top_p}/max=provider-default"
 
 
 class ModelMessage(BaseModel):
@@ -108,6 +128,8 @@ class TokenUsage(BaseModel):
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
+    reasoning_tokens: int | None = Field(default=None, exclude_if=lambda v: v is None)
+    cached_tokens: int | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class ModelRequest(BaseModel):
@@ -121,7 +143,8 @@ class ModelRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     messages: tuple[ModelMessage, ...]
-    params: ModelParams
+    model_call_id: str = Field(default_factory=lambda: uuid4().hex)
+    params: ModelParams | PreparationModelParams
     role: str
     """Workflow role this call belongs to: ``manager`` or ``compliance``."""
     prompt_version: str
@@ -130,6 +153,12 @@ class ModelRequest(BaseModel):
     """Fresh-context index for this call. Part of the audit trail, not the prompt."""
     run_id: str | None = None
     """Run this call belongs to, when the node can observe it."""
+
+    @model_validator(mode="after")
+    def _preparation_params_only_for_preparation(self) -> "ModelRequest":
+        if isinstance(self.params, PreparationModelParams) and self.role not in {"material_generator", "material_reviewer"}:
+            raise ValueError("preparation model parameters are only allowed for material preparation roles")
+        return self
 
     def rendered_input(self) -> str:
         """Every message sent, in order, exactly as sent.
@@ -156,6 +185,9 @@ class ModelResponse(BaseModel):
     request_id: str | None = None
     usage: TokenUsage | None = None
     finish_reason: str | None = None
+    reasoning_content: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    reasoning_observation: dict | None = Field(default=None, exclude_if=lambda v: v is None)
+    provider_response: dict | None = Field(default=None, exclude_if=lambda v: v is None)
     """Why the provider stopped generating, when it says.
 
     ``"stop"`` means the model finished its answer. ``"length"`` means it was cut

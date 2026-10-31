@@ -314,10 +314,11 @@ def test_the_compliance_request_carries_no_hidden_shaped_keys(llm_runner, llm_ca
 def test_a_request_is_not_a_state_object(llm_runner, llm_case, make_state):
     """The request is its own type: it cannot smuggle the state alongside."""
     llm_runner.run(make_state())
-    expected = {"messages", "params", "role", "prompt_version", "invocation", "run_id"}
+    expected = {"messages", "params", "role", "prompt_version", "invocation", "run_id", "model_call_id"}
     for client in (llm_case.manager_client, llm_case.compliance_client):
         for sent in client.requests:
             assert set(sent.model_dump(mode="json")) == expected
+            assert len(sent.model_call_id) == 32
 
 
 # --------------------------------------------------------------------------

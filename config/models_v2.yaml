@@ -1,0 +1,16 @@
+models_version: "2"
+roles:
+  manager:
+    provider: openai-compatible
+    model_id: DeepSeek-V4.1-Flash
+    temperature: 0.0
+    max_output_tokens: 32768
+    top_p: null
+    timeout_seconds: 360.0
+  compliance:
+    provider: openai-compatible
+    model_id: DeepSeek-V4.1-Flash
+    temperature: 0.0
+    max_output_tokens: 32768
+    top_p: null
+    timeout_seconds: 360.0

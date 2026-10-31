@@ -29,6 +29,8 @@ No scorer is implemented here: this is the boundary only.
 
 from __future__ import annotations
 
+from ..schemas import ManagerOutputV2, ComplianceOutputV2
+
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -110,8 +112,8 @@ class ExecutionRecord(BaseModel):
     policy_target_clause_categories: tuple[str, ...]
 
     # -- node outputs ------------------------------------------------------
-    manager_output: ManagerOutput | None = None
-    compliance_output: ComplianceOutput | None = None
+    manager_output: ManagerOutputV2 | ManagerOutput | None = None
+    compliance_output: ComplianceOutputV2 | ComplianceOutput | None = None
 
     # -- execution metadata ------------------------------------------------
     status: RunStatus

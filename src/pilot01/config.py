@@ -130,6 +130,17 @@ class ConditionConfig(BaseModel):
     source_access: bool
     verification_required: bool
     description: str = ""
+    disclosure_level: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    factorial_design: bool = Field(default=False, exclude_if=lambda v: not v)
+
+    @model_validator(mode="after")
+    def _check_disclosure(self) -> "ConditionConfig":
+        if self.disclosure_level is not None:
+            if self.disclosure_level not in ("D0", "D1", "D2"):
+                raise ValueError("disclosure_level must be D0, D1 or D2")
+            if not self.factorial_design and (not self.source_access or not self.verification_required):
+                raise ValueError("disclosure experiment fixes source access and enforcement on")
+        return self
 
     @model_validator(mode="after")
     def _reject_degenerate_cell(self) -> "ConditionConfig":
@@ -339,6 +350,8 @@ class ModelsConfig(BaseModel):
                 f"models config declares unknown role(s) {extra}; "
                 f"known roles are {list(REQUIRED_MODEL_ROLES)}"
             )
+        if any(params.max_output_tokens is None for params in self.roles.values()):
+            raise ValueError("experiment roles require an explicit output cap")
         return self
 
     def for_role(self, role: str) -> ModelParams:

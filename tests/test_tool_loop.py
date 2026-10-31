@@ -32,6 +32,7 @@ from pilot01.source import ToolCallLog
 from pilot01.source.tools import OPEN_SOURCE_SPAN, SEARCH_CONTRACT, SourceTools
 from pilot01.workflow.nodes.tool_loop import (
     MAX_TOOL_ROUNDS,
+    NO_TOOL_REQUEST,
     ToolLoopError,
     extract_tool_request,
     render_tool_result,
@@ -368,12 +369,12 @@ def test_the_records_of_a_failed_parse_are_still_kept():
 
 
 def test_a_response_with_no_json_object_is_not_treated_as_a_tool_request():
-    assert extract_tool_request("no json here") is None
+    assert extract_tool_request("no json here") is NO_TOOL_REQUEST
     assert extract_tool_request('{"tool_request": {"tool": "x", "arguments": {}}}') == {
         "tool": "x",
         "arguments": {},
     }
-    assert extract_tool_request('{"clause_status": "present"}') is None
+    assert extract_tool_request('{"clause_status": "present"}') is NO_TOOL_REQUEST
 
 
 def test_a_tool_request_wrapped_in_a_fence_is_still_read():
@@ -490,3 +491,24 @@ def test_a_client_failure_is_recorded_before_it_propagates():
         )
     assert len(log) == 1
     assert "transport is down" in (log.records[0].error or "")
+
+
+def test_explicit_null_is_rejected_with_context_preserved():
+    result, client, tools = drive((' {"tool_request": null} ', answer()))
+    assert result.rounds == 1
+    assert not result.tool_outcomes[0].ok
+    assert not result.repaired
+    assert len(tools.log.records) == 1
+    assert result.records[0].raw_response == ' {"tool_request": null} '
+    assert result.records[0].is_tool_turn
+    assert all(not r.is_repair for r in result.records)
+
+
+def test_repeated_null_cannot_escape_tool_budget():
+    with pytest.raises(ToolLoopError):
+        drive(tuple('{"tool_request": null}' for _ in range(4)), max_tool_rounds=2)
+
+
+def test_null_and_missing_are_distinct():
+    assert extract_tool_request('{"tool_request": null}') is None
+    assert extract_tool_request('{}') is NO_TOOL_REQUEST

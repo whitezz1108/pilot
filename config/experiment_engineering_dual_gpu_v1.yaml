@@ -1,0 +1,7 @@
+# Uses the existing v3 treatments and prompts with an isolated model budget.
+experiment_version: "3"
+conditions: conditions_v3.yaml
+runtime: runtime_v3.yaml
+models: models_engineering_dual_gpu_v1.yaml
+workflow: workflow_v1.yaml
+policy: policies/policy_v2.yaml

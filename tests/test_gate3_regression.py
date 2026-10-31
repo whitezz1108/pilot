@@ -354,12 +354,12 @@ def test_the_experiment_layer_imports_nothing_new(tmp_path):
 
     A serial batch runner needs a scheduler, a dataframe and an HTTP client about
     equally badly: not at all. The experiment package is held to the standard
-    library, pydantic, and this package. A provider SDK or a plotting library
+    library, pydantic, PyYAML (the existing configuration dependency), and this package. A provider SDK or a plotting library
     arriving here would mean the layer had started doing something the gate did
     not ask for.
     """
     package = Path(pilot01.__file__).resolve().parent / "experiment"
-    allowed_third_party = {"pydantic"}
+    allowed_third_party = {"pydantic", "yaml"}
 
     offenders: list[tuple[str, str]] = []
     for path in sorted(package.rglob("*.py")):

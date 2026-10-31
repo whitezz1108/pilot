@@ -31,6 +31,8 @@ message-history object exists anywhere in the codebase.
 
 from __future__ import annotations
 
+from ..schemas import ManagerOutputV2, ComplianceOutputV2
+
 from collections.abc import Iterator
 from typing import Any, ClassVar
 
@@ -149,7 +151,7 @@ class ComplianceInput(RestrictedView):
 
     case_id: str
     policy: ExperimentalPolicy
-    manager_output: ManagerOutput
+    manager_output: ManagerOutputV2 | ManagerOutput
     source_access: bool
     verification_required: bool
     invocation: int = Field(default=0, ge=0, description="Fresh-context index for this call.")

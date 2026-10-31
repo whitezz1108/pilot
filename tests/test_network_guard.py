@@ -7,9 +7,11 @@ any outbound connection an ``AssertionError``. The tests below prove the guard
 is actually installed, and prove it end to end by driving the *real* adapter
 with its *real* transport and watching it fail to connect.
 
-**In the source**, the provider boundary is checked statically: exactly one
-module may import a network library, no workflow module may reach for that
-module, and nothing anywhere may carry a credential.
+**In the source**, outbound requests remain in the provider adapter. The
+web console may import its inbound HTTP server and URL parser; the quota
+wrapper may inspect HTTP errors. These are exact module allowances, not a
+blanket network exemption. No workflow module may reach the provider and no
+tracked file may carry a credential.
 
 The point of the second half is that the first half is not load-bearing. A guard
 that only catches a live call at runtime still lets the call site be written;
@@ -38,7 +40,12 @@ PROVIDER_ADAPTER = SRC / "model" / "openai_compat.py"
 """The single module permitted to know about HTTP."""
 
 NETWORK_MODULES = ("urllib", "http", "socket", "requests", "httpx", "aiohttp", "ssl")
-"""Import roots that may appear only in the provider adapter."""
+ALLOWED_NETWORK_IMPORTS = {
+    "src/pilot01/model/openai_compat.py": {"urllib.error", "urllib.request"},
+    "src/pilot01/model/execution.py": {"urllib.error", "urllib.parse"},
+    "src/pilot01/experiment/console.py": {"http.server", "urllib.parse"},
+}
+"""Exact inbound, parsing, error-handling and outbound boundaries."""
 
 SDK_MODULES = ("openai", "anthropic", "google", "cohere", "mistralai", "boto3")
 """Vendor SDKs. Gate 2 uses one provider-neutral adapter, so none may appear."""
@@ -166,13 +173,16 @@ def test_the_guard_is_installed_for_every_test_in_the_suite():
 # --------------------------------------------------------------------------
 
 
-def test_only_the_provider_adapter_imports_a_network_module():
+def test_only_approved_network_boundaries_import_exact_network_modules():
     offenders: list[str] = []
     for path in _py_files(SRC):
-        if path == PROVIDER_ADAPTER:
-            continue
-        for root in _imported_roots(path) & set(NETWORK_MODULES):
-            offenders.append(f"{_relative(path)} imports {root!r}")
+        allowed = ALLOWED_NETWORK_IMPORTS.get(_relative(path), set())
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            modules = ([alias.name for alias in node.names] if isinstance(node, ast.Import)
+                       else [node.module] if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module else [])
+            for module in modules:
+                if module.split(".")[0] in NETWORK_MODULES and module not in allowed:
+                    offenders.append(f"{_relative(path)} imports {module!r}")
     assert offenders == [], (
         "network libraries must stay behind the provider boundary: " + "; ".join(offenders)
     )
@@ -228,11 +238,12 @@ def test_the_model_layer_does_not_import_the_workflow_layer():
     assert offenders == [], f"the model layer must not depend on the workflow: {offenders}"
 
 
-def test_only_the_adapter_reads_a_credential_from_the_environment():
+def test_only_approved_runtime_boundaries_reference_api_credentials():
     readers = [
         _relative(path) for path in _py_files(SRC) if "API_KEY" in path.read_text(encoding="utf-8")
     ]
-    assert readers == ["src/pilot01/model/openai_compat.py"]
+    assert readers == ["src/pilot01/experiment/console.py", "src/pilot01/model/execution.py",
+                       "src/pilot01/model/openai_compat.py"]
 
 
 def test_no_tracked_file_contains_a_live_credential():

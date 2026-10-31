@@ -142,6 +142,8 @@ def make_llm_manager_node(
     tools: SourceTools | None = None,
     verification_log: VerificationLog | None = None,
     max_tool_rounds: int = MAX_TOOL_ROUNDS,
+    runtime=None,
+    disclosure_level: str | None = None,
 ) -> tuple[Node, AgentContext]:
     """Build the real Manager node, and the context that observes it.
 
@@ -153,6 +155,19 @@ def make_llm_manager_node(
     had opened a passage, which is precisely what V1 has to be able to say.
     """
 
+    from ...schemas import ManagerOutputV2
+    prompt_template = load_manager_prompt()
+    message_builder = build_manager_messages
+    upstream_builder = manager_upstream_ids
+    if runtime is not None:
+        from functools import partial
+        from ...prompts import load_prompt
+        from .disclosure import build_messages, visible_upstream_ids
+        prompt_template = load_prompt("manager", runtime.prompt_version)
+        message_builder = partial(build_messages, role="manager", disclosure_level=disclosure_level, runtime=runtime)
+        upstream_builder = visible_upstream_ids
+        max_tool_rounds = runtime.max_tool_requests_per_node
+
     def apply(state, output) -> None:
         state.manager_output = output
 
@@ -162,18 +177,20 @@ def make_llm_manager_node(
         view_model=ManagerInput,
         build_view=build_manager_view,
         prompt=AgentPromptSpec(
-            system_prompt=load_manager_prompt(),
-            build_messages=build_manager_messages,
+            system_prompt=prompt_template,
+            build_messages=message_builder,
         ),
         repair_prompt=load_repair_prompt(),
-        output_model=ManagerOutput,
+        output_model=ManagerOutputV2 if runtime is not None else ManagerOutput,
         params=params,
         client=client,
         call_log=call_log,
         apply=apply,
         tools=tools,
         verification_log=verification_log,
-        seed_upstream=manager_upstream_ids,
+        seed_upstream=upstream_builder,
         max_tool_rounds=max_tool_rounds,
+        validator_version=runtime.validator_version if runtime is not None else None,
+        enforce_verification=runtime.verification_mode != "audit_only" if runtime is not None else True,
     )
 

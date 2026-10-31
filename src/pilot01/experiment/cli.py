@@ -27,6 +27,7 @@ so nothing here needs a subprocess, a network, or a shipped registry file.
 """
 
 from __future__ import annotations
+import json
 
 import argparse
 import sys
@@ -150,6 +151,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     def add_common(sub: argparse.ArgumentParser, *, registry_required: bool = True) -> None:
+        sub.add_argument("--profile", default=None, help="explicit experiment profile, e.g. config/experiment_v2.yaml")
         sub.add_argument(
             "--registry",
             required=registry_required,
@@ -212,6 +214,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--fail-fast", action="store_true", help="stop at the first failure")
     run.add_argument("--quiet", action="store_true", help="print only the final counts")
+    run.add_argument("--execution-config", default=None,
+        help="live concurrency, API slots and bounded HTTP retries (YAML); omitted means legacy serial transport")
 
     score = subparsers.add_parser("score", help="derive one row per run from raw artifacts")
     add_common(score)
@@ -257,6 +261,13 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     registry = _load_registry(args.registry)
     conditions: ConditionsConfig = load_conditions_v1()
     models: ModelsConfig = load_models_v1()
+    profile = None
+    if args.profile:
+        from ..runtime import ExperimentProfile
+        from .development.neutral_materials import verify_ready_registry
+        profile = ExperimentProfile(Path(args.profile))
+        verify_ready_registry(Path(args.registry))
+        conditions, models = profile.conditions, profile.models
 
     plan = build_run_plan(
         experiment_id=args.experiment_id,
@@ -267,6 +278,8 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         models=models,
         condition_ids=_split(args.conditions),
         case_ids=_split(args.cases),
+        runtime_config=profile.runtime if profile else None,
+        profile_fingerprint=profile.fingerprint() if profile else None,
     )
 
     paths = ExperimentPaths(root=Path(args.out), experiment_id=args.experiment_id).ensure()
@@ -285,6 +298,8 @@ def _cmd_plan(args: argparse.Namespace) -> int:
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
+    if args.execution_config and not args.live:
+        raise ValueError("--execution-config requires --live")
     if args.live and args.responses:
         print(
             "error: --live and --responses are different transports; choose one",
@@ -305,6 +320,13 @@ def _cmd_run(args: argparse.Namespace) -> int:
     workflow: WorkflowConfig = load_workflow_v1()
     models = load_models_v1()
     plan = plan_or_raise(args.plan)
+    profile = None
+    if args.profile:
+        from ..runtime import ExperimentProfile
+        from .development.neutral_materials import verify_ready_registry
+        profile = ExperimentProfile(Path(args.profile))
+        verify_ready_registry(Path(args.registry))
+        conditions, models, workflow = profile.conditions, profile.models, profile.workflow
 
     if args.live:
         # Asked of the adapter rather than read here: the adapter is the only
@@ -344,6 +366,18 @@ def _cmd_run(args: argparse.Namespace) -> int:
         transport = f"scripted ({args.responses})"
 
     paths = ExperimentPaths(root=Path(args.out), experiment_id=plan.experiment_id)
+    max_workers = 1
+    execution_policy = paths.batch_index_json.parent / "execution_policy.json"
+    if execution_policy.exists() and not args.execution_config:
+        raise ValueError("this batch has a frozen execution policy; pass its --execution-config")
+    if args.execution_config:
+        if not execution_policy.exists() and paths.raw_dir.exists() and any(paths.raw_dir.iterdir()):
+            raise ValueError("cannot add concurrency/API policy to an existing raw batch; use a new experiment ID")
+        from ..model.execution import ExecutionSettings, PooledLiveFactory
+        settings = ExecutionSettings.load(args.execution_config)
+        factory = PooledLiveFactory(settings, plan.jobs, paths.batch_index_json.parent)
+        factory.write_manifest(args.execution_config, plan)
+        max_workers = settings.max_parallel_runs
 
     def progress(position: int, total: int, result: JobResult) -> None:
         if args.quiet:
@@ -360,9 +394,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
         client_factory=factory,
         paths=paths,
         progress=progress,
+        profile=profile,
     )
     batch = runner.run(
-        resume=args.resume, rerun_failed=args.rerun_failed, fail_fast=args.fail_fast
+        resume=args.resume, rerun_failed=args.rerun_failed, fail_fast=args.fail_fast,
+        max_workers=max_workers,
     )
     batch.write_json(paths.batch_index_json)
 
@@ -374,6 +410,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_score(args: argparse.Namespace) -> int:
+    if _v2_report(args):
+        return EXIT_OK
     registry = _load_registry(args.registry)
     paths = ExperimentPaths(root=Path(args.out), experiment_id=args.experiment_id)
     scores = score_experiment(
@@ -389,6 +427,8 @@ def _cmd_score(args: argparse.Namespace) -> int:
 
 
 def _cmd_summary(args: argparse.Namespace) -> int:
+    if _v2_report(args):
+        return EXIT_OK
     registry = _load_registry(args.registry)
     paths = ExperimentPaths(root=Path(args.out), experiment_id=args.experiment_id)
     scores = score_experiment(
@@ -405,6 +445,28 @@ def _cmd_summary(args: argparse.Namespace) -> int:
     print(_format_summary(summary))
     print(f"summary: {paths.summary_json}")
     return EXIT_OK
+
+
+def _v2_report(args):
+    paths = ExperimentPaths(root=Path(args.out), experiment_id=args.experiment_id)
+    plan = RunPlan.load_json(paths.run_plan_json) if paths.run_plan_json.exists() else None
+    if plan is None or plan.runtime_config is None:
+        if args.profile:
+            raise ValueError("v2 reporting requires the frozen v2 run_plan.json")
+        return False
+    from ..runtime import ExperimentProfile
+    from .scoring_v2 import write_report
+    if not args.profile:
+        raise ValueError("v2 reporting requires --profile; legacy scoring would use different metrics")
+    profile = ExperimentProfile(Path(args.profile))
+    if profile.fingerprint() != plan.profile_fingerprint:
+        raise ValueError("profile changed since plan freeze")
+    registry = _load_registry(args.registry)
+    plan.check(profile.conditions, registry)
+    summary = write_report(plan, registry, paths.raw_dir, paths.processed_dir, _pricing(args.pricing))
+    print(json.dumps(summary["overall"], ensure_ascii=False, indent=2))
+    print(f"v2 report: {paths.processed_dir / 'experiment_summary_v2.json'}")
+    return True
 
 
 def _format_summary(summary: ExperimentSummary) -> str:
@@ -455,6 +517,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ScoringError,
         ModelClientError,
         FileNotFoundError,
+        ValueError,
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_ERROR

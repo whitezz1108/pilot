@@ -1,0 +1,11 @@
+# Local INT4+MTP single endpoint. Use scripts/with_local_model.sh.
+max_parallel_runs: 1
+http_retries: 0
+recovery_successes: 20
+role_slots:
+  manager: 1
+  compliance: 1
+endpoints:
+- slot: 1
+  max_in_flight: 1
+  reasoning_stream: true
