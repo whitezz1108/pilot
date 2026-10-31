@@ -1,7 +1,7 @@
 # 五次历史异常的原生工具协议实机重跑报告
 
 日期：2026-11-01  
-实机代码版本：`128b353952d59b37d27942c0bd44a7874be60ba0`  
+最终协议代码版本：`128b353952d59b37d27942c0bd44a7874be60ba0`  
 分支：`codex/typed-tool-protocol`
 
 ## 实验边界
@@ -35,13 +35,13 @@
 
 ## 五条最终有效重跑
 
-| 历史异常 | 原异常类 | 新 experiment ID | 状态 | 总耗时 | 模型请求 | 工具调用 M/C | 正式答卷 M/C |
-|---|---|---|---:|---:|---:|---:|---:|
-| `3cde17a9` | `tool_request:null` | `native-rerun-multitool-20261101-3cde17a9-e1` | completed | 228.330 s | 12 | 9 / 11 | 1 / 1 |
-| `78353028` | cursor/query mismatch | `native-rerun-budgettelemetry-20261101-78353028-e0` | completed | 599.887 s | 14 | 14 / 15 | 1 / 1 |
-| `988899e6` | `tool_request:null` | `native-rerun-budgettelemetry-20261101-988899e6-e1` | completed | 506.456 s | 12 | 11 / 11 | 1 / 1 |
-| `d1e72e8b` | cursor/query mismatch | `native-rerun-budgettelemetry-20261101-d1e72e8b-e1` | completed | 792.343 s | 16 | 15 / 13 | 1 / 1 |
-| `f856360e` | `tool_request:null` | `native-rerun-finalonly-20261101-f856360e-e0` | completed | 317.077 s | 14 | 11 / 15 | 1 / 1 |
+| 历史异常 | 原异常类 | 新 experiment ID | 实际代码 | 状态 | 总耗时 | 模型请求 | 工具调用 M/C | 正式答卷 M/C |
+|---|---|---|---|---:|---:|---:|---:|---:|
+| `3cde17a9` | `tool_request:null` | `native-rerun-multitool-20261101-3cde17a9-e1` | `4505c47` | completed | 228.330 s | 12 | 9 / 11 | 1 / 1 |
+| `78353028` | cursor/query mismatch | `native-rerun-budgettelemetry-20261101-78353028-e0` | `a57c1c6` | completed | 599.887 s | 14 | 14 / 15 | 1 / 1 |
+| `988899e6` | `tool_request:null` | `native-rerun-budgettelemetry-20261101-988899e6-e1` | `a57c1c6` | completed | 506.456 s | 12 | 11 / 11 | 1 / 1 |
+| `d1e72e8b` | cursor/query mismatch | `native-rerun-budgettelemetry-20261101-d1e72e8b-e1` | `a57c1c6` | completed | 792.343 s | 16 | 15 / 13 | 1 / 1 |
+| `f856360e` | `tool_request:null` | `native-rerun-finalonly-20261101-f856360e-e0` | `128b353` | completed | 317.077 s | 14 | 11 / 15 | 1 / 1 |
 
 合计：5/5 完成；68 次模型请求；125 次工具调用；五条有效重跑的模型任务墙钟时间合计 2444.093 秒（40 分 44.093 秒）。
 
@@ -72,6 +72,6 @@
 
 ## 结论边界
 
-- 这次结果证明：在新的原生工具协议、分页 cursor 绑定、预算遥测和有界状态机下，五个冻结历史异常任务都能完整完成，而且过程日志中未再出现原三次 null 或原两次分页错误。
+- 这次结果证明：在逐步演进的原生工具协议、分页 cursor 绑定、预算遥测和有界状态机下，五个冻结历史异常任务都能完整完成，而且过程日志中未再出现原三次 null 或原两次分页错误。
 - 这不等于证明 Qwen3.8/SGLang 的底层随机异常已经消失。最终有效重跑没有再次触发缺 ID，也没有实际进入 final-only；这两条修复目前由冻结结构的离线测试覆盖，而不是由最终五条实机结果直接触发验证。
 - 因而可以宣称“实验客户端已能处理已观察到的协议异常，并在这五条冻结任务上 5/5 完成”，不能宣称“SGLang 已修复”或“未来故障率为 0”。
