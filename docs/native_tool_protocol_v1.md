@@ -57,3 +57,6 @@ the model template exposes the tool schema, and `qwen3_coder` recovers the
 function name and arguments from the generated tool block. Explicit launch
 arguments are still required; auto-detection is not treated as a frozen
 experiment setting.
+
+The first isolated validation is summarized in
+[`native_tool_protocol_validation_20261101.md`](native_tool_protocol_validation_20261101.md).
