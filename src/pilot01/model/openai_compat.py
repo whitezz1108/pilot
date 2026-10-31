@@ -295,13 +295,68 @@ class OpenAICompatibleClient:
 
         responded_at = datetime.now(timezone.utc)
         envelope = self._decode(body)
-        return self._response(envelope, http_request, request, requested_at, responded_at)
+        try:
+            return self._response(envelope, http_request, request, requested_at, responded_at)
+        except ModelClientError as exc:
+            exc.partial_response = self._partial_response_from_envelope(
+                envelope,
+                http_request,
+                request,
+                requested_at,
+                responded_at,
+            )
+            raise
 
     def _attach_partial(self, error, http_request, request, requested_at):
         capture = getattr(http_request, "pilot01_stream_capture", None)
         if capture is not None:
-            error.partial_response = self._response(capture.snapshot(), http_request, request,
-                                                    requested_at, datetime.now(timezone.utc))
+            error.partial_response = self._partial_response_from_envelope(
+                capture.snapshot(),
+                http_request,
+                request,
+                requested_at,
+                datetime.now(timezone.utc),
+            )
+
+    def _partial_response_from_envelope(
+        self,
+        envelope,
+        http_request,
+        request,
+        requested_at,
+        responded_at,
+    ):
+        """Preserve a malformed provider envelope without normalizing its calls."""
+        capture = getattr(http_request, "pilot01_stream_capture", None)
+        redacted = json.loads(_redact(json.dumps(envelope), self._api_key))
+        reasoning, observation = observe_reasoning(
+            redacted,
+            timing=capture.timing() if capture is not None else None,
+            tokenizer_path=self._reasoning_tokenizer_path,
+        )
+        provider_response = dict(redacted)
+        if capture is not None:
+            provider_response["stream_events"] = json.loads(
+                _redact(json.dumps(capture.events), self._api_key)
+            )
+        try:
+            text = self._extract_text(redacted)
+        except ModelClientError:
+            text = ""
+        return ModelResponse(
+            text=text,
+            provider=self._provider,
+            model_id=str(redacted.get("model") or request.params.model_id),
+            requested_at=requested_at,
+            responded_at=responded_at,
+            request_id=redacted.get("id"),
+            usage=self._extract_usage(redacted),
+            finish_reason=self._extract_finish_reason(redacted),
+            reasoning_content=reasoning,
+            reasoning_observation=observation,
+            provider_response=provider_response,
+            tool_calls=(),
+        )
 
     def _response(self, envelope, http_request, request, requested_at, responded_at):
         capture = getattr(http_request, "pilot01_stream_capture", None)
@@ -328,7 +383,10 @@ class OpenAICompatibleClient:
             reasoning_content=reasoning,
             reasoning_observation=observation,
             provider_response=provider_response,
-            tool_calls=self._extract_tool_calls(envelope),
+            tool_calls=self._extract_tool_calls(
+                envelope,
+                model_call_id=request.model_call_id,
+            ),
         )
 
     # -- response decoding --------------------------------------------------
@@ -381,7 +439,11 @@ class OpenAICompatibleClient:
         )
 
     @staticmethod
-    def _extract_tool_calls(envelope: dict) -> tuple[ModelToolCall, ...]:
+    def _extract_tool_calls(
+        envelope: dict,
+        *,
+        model_call_id: str,
+    ) -> tuple[ModelToolCall, ...]:
         choices = envelope.get("choices") or []
         if not choices or not isinstance(choices[0], dict):
             return ()
@@ -395,10 +457,12 @@ class OpenAICompatibleClient:
                 raise ModelClientError(f"tool_calls[{index}] is not an object")
             function = raw.get("function") or {}
             call_id = raw.get("id")
+            call_id_origin = "provider"
             name = function.get("name") if isinstance(function, dict) else None
             raw_arguments = function.get("arguments") if isinstance(function, dict) else None
             if not isinstance(call_id, str) or not call_id:
-                raise ModelClientError(f"tool_calls[{index}] has no call id")
+                call_id = f"call_adapter_{model_call_id}_{index}"
+                call_id_origin = "adapter_generated"
             if not isinstance(name, str) or not name:
                 raise ModelClientError(f"tool_calls[{index}] has no function name")
             if isinstance(raw_arguments, str):
@@ -411,6 +475,7 @@ class OpenAICompatibleClient:
             calls.append(
                 ModelToolCall(
                     call_id=call_id,
+                    call_id_origin=call_id_origin,
                     name=name,
                     arguments=arguments,
                     raw_arguments=raw_arguments if isinstance(raw_arguments, str) else None,

@@ -224,6 +224,90 @@ def test_live_adapter_normalizes_openai_tool_calls():
     )
 
 
+def test_live_adapter_generates_and_marks_missing_provider_call_id():
+    body = json.dumps(
+        {
+            "id": "chatcmpl-missing-call-id",
+            "model": "served",
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": "search_contract",
+                                    "arguments": '{"query":"control"}',
+                                },
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+        }
+    ).encode()
+    client = OpenAICompatibleClient(
+        base_url="https://offline.invalid/v1",
+        api_key="offline-placeholder",
+        tool_transport="native",
+        transport=lambda *_: body,
+    )
+    request = ModelRequest(
+        messages=(ModelMessage(role="user", content="Assess."),),
+        params=PARAMS,
+        role="manager",
+        prompt_version="native-v1",
+    )
+    result = client.generate(request)
+    assert result.tool_calls[0].call_id == f"call_adapter_{request.model_call_id}_0"
+    assert result.tool_calls[0].call_id_origin == "adapter_generated"
+    assert result.provider_response["choices"][0]["message"]["tool_calls"][0].get("id") is None
+
+
+def test_malformed_native_call_keeps_raw_provider_envelope_on_error():
+    body = json.dumps(
+        {
+            "id": "chatcmpl-malformed-tool",
+            "model": "served",
+            "choices": [
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call-no-name",
+                                "type": "function",
+                                "function": {"arguments": "{}"},
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+        }
+    ).encode()
+    client = OpenAICompatibleClient(
+        base_url="https://offline.invalid/v1",
+        api_key="offline-placeholder",
+        tool_transport="native",
+        transport=lambda *_: body,
+    )
+    with pytest.raises(ModelClientError, match="has no function name") as exc:
+        client.generate(
+            ModelRequest(
+                messages=(ModelMessage(role="user", content="Assess."),),
+                params=PARAMS,
+                role="manager",
+                prompt_version="native-v1",
+            )
+        )
+    raw = exc.value.partial_response.provider_response
+    assert raw["choices"][0]["message"]["tool_calls"][0]["id"] == "call-no-name"
+
+
 def test_mixed_content_and_tool_call_is_a_protocol_violation():
     with pytest.raises(ToolProtocolViolation, match="normal content and a tool call"):
         decide_agent_response(

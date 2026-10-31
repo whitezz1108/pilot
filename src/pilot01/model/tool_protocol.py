@@ -64,6 +64,7 @@ class ModelToolCall(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     call_id: str = Field(min_length=1)
+    call_id_origin: Literal["provider", "adapter_generated"] = "provider"
     name: str = Field(min_length=1)
     arguments: Any
     raw_arguments: str | None = Field(default=None, exclude_if=lambda v: v is None)

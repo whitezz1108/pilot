@@ -445,6 +445,7 @@ def run_tool_loop(
                     (
                         {
                             "call_id": native_calls[0].call_id,
+                            "call_id_origin": native_calls[0].call_id_origin,
                             "tool": native_calls[0].name,
                             "arguments": native_calls[0].arguments,
                         }
@@ -453,6 +454,7 @@ def run_tool_loop(
                             "calls": [
                                 {
                                     "call_id": call.call_id,
+                                    "call_id_origin": call.call_id_origin,
                                     "tool": call.name,
                                     "arguments": call.arguments,
                                 }
