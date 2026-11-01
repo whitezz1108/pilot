@@ -12,7 +12,7 @@
 bash deploy/native/launch.sh
 ```
 
-完整 Docker 和 SGLang 参数见启动脚本。镜像固定为本机镜像 ID `sha256:e3a4f06001a29542fc4a8638536d9ffc5eb9c9942b08603c09b19a56eae4a1ae`（历史标签 `lmsysorg/sglang:v0.5.22`）；只读挂载 `/home/evan/ai/models/Qwen3.8-27B`。GPU 2 必须没有计算任务且功率上限已经是 200 W；脚本不会更改共享 GPU 的功率或停止已有服务。服务器当前未启用 NVIDIA persistence mode，主机或驱动重启后需先重新执行 `sudo nvidia-smi -i 2 -pl 200`，否则启动脚本会拒绝继续。端口为本机 30002。模型 BF16、NEXTN/MTP steps 3、draft tokens 4、top-k 1、49,152 上下文、并发 1、禁用 radix 前缀缓存，两种 parser 均显式指定。服务 preferred sampling 默认值固定为 `recommended-primary`（temperature 0.6、top-p 0.95、top-k 20、min-p 0、max new tokens 32,768）；两个实验入口仍在每次请求中显式发送各自采样参数。镜像 ID 是 Docker 本地镜像 ID，并非 registry 的可跨主机拉取 digest。
+完整 Docker 和 SGLang 参数见启动脚本。镜像固定为本机镜像 ID `sha256:e3a4f06001a29542fc4a8638536d9ffc5eb9c9942b08603c09b19a56eae4a1ae`（历史标签 `lmsysorg/sglang:v0.5.22`）；只读挂载 `/home/evan/ai/models/Qwen3.8-27B`。GPU 2 必须没有计算任务且功率上限已经是 200 W；脚本不会更改共享 GPU 的功率或停止已有服务。2026-11-01 已为三张 GPU 启用 NVIDIA persistence mode，`nvidia-persistenced` 处于 active 状态。主机或驱动重启后仍需复核 GPU 2 的 200 W 功率上限，并确认 persistence mode 和模型服务状态；功率不符时启动脚本会拒绝继续。端口为本机 30002。模型 BF16、NEXTN/MTP steps 3、draft tokens 4、top-k 1、49,152 上下文、并发 1、禁用 radix 前缀缓存，两种 parser 均显式指定。服务 preferred sampling 默认值固定为 `recommended-primary`（temperature 0.6、top-p 0.95、top-k 20、min-p 0、max new tokens 32,768）；两个实验入口仍在每次请求中显式发送各自采样参数。镜像 ID 是 Docker 本地镜像 ID，并非 registry 的可跨主机拉取 digest。
 
 启动后校验服务器返回的模型、配置与 parser、模型列表，两套配置实际经 runner 构造出的请求采样字段，并发送一次有界合成请求检查服务接受推荐采样字段及返回结构化工具调用；发现不匹配即失败。服务器不回显单次请求的实际采样状态，因此后者只能证明客户端构造了正确请求，不能证明推理引擎每一步执行或模型权重内容；正式运行需保留实际请求日志、服务器信息和模型文件身份。验证失败后容器保留以供排查；不应将其视作可用服务。
 
