@@ -234,6 +234,10 @@ class ModelRequest(BaseModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
+    parallel_tool_calls: bool | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     model_call_id: str = Field(default_factory=lambda: uuid4().hex)
     params: ModelParams | PreparationModelParams
     role: str

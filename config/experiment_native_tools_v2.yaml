@@ -1,0 +1,8 @@
+# New strict-protocol experiment entrypoint.  native-v1 remains the frozen
+# reference for historical replay and must not be overwritten with v2 results.
+experiment_version: "3"
+conditions: conditions_v3.yaml
+runtime: runtime_native_tools_v2.yaml
+models: models_bf16_mtp_xhigh_native_v1.yaml
+workflow: workflow_v1.yaml
+policy: policies/policy_v2.yaml

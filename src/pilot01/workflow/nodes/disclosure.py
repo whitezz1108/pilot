@@ -37,7 +37,7 @@ def build_messages(view, *, role, disclosure_level, runtime):
     system = template.render(policy=render_policy_block(view.policy))
     tool_names = (
         PAGED_SOURCE_TOOL_NAMES
-        if runtime.tool_protocol == "native-v1"
+        if runtime.tool_protocol in {"native-v1", "native-v2"}
         else SOURCE_TOOL_NAMES
     )
     common = "\n\n".join((f"CASE: {view.case_id}", material,

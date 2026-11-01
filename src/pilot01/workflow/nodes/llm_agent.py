@@ -214,6 +214,7 @@ def make_llm_agent_node(
     validator_version: str | None = None,
     enforce_verification: bool = True,
     tool_transport: ToolTransport = "legacy-text",
+    strict_native_state_machine: bool = False,
 ) -> tuple[Node, AgentContext]:
     """Build an LLM-backed agent node, and the context that observes it.
 
@@ -308,6 +309,7 @@ def make_llm_agent_node(
                 max_tool_rounds=max_tool_rounds,
                 audit=audit_request,
                 tool_transport=tool_transport,
+                strict_native_state_machine=strict_native_state_machine,
             )
         except ModelClientError as exc:
             raise ProtocolError(f"{name} model call failed: {exc}") from exc

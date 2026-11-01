@@ -1,8 +1,8 @@
 # 原生工具七层配置组合（阶段一）
 
-组合版本：`native-seven-layer-20261101-v1`。七层依次为 experiment、conditions、runtime、models、workflow、policy、execution；各历史组件的内部版本号保留其真实含义，不改写旧实验。配置组合、文件和 SHA256 见 `config/native-seven-layer-manifest.json`，校验命令为 `.venv/bin/python scripts/config_manifest.py --check`。修改组合文件后需重新运行该脚本生成清单，并重新审核差异；清单用于检测变化，不是签名。
+组合版本：`native-seven-layer-20261101-v2`。七层依次为 experiment、conditions、runtime、models、workflow、policy、execution；各历史组件的内部版本号保留其真实含义，不改写旧实验。配置组合、文件和 SHA256 见 `config/native-seven-layer-manifest.json`，校验命令为 `.venv/bin/python scripts/config_manifest.py --check`。修改组合文件后需重新运行该脚本生成清单，并重新审核差异；清单用于检测变化，不是签名。
 
-两个实验入口：`config/experiment_native_tools_v1.yaml` 是 `historical-reproduction`（temperature 1.0），`config/experiment_recommended_primary_v1.yaml` 是 `recommended-primary`（temperature 0.6）；两者均显式设置 top-p 0.95、top-k 20、min-p 0。历史任务还需使用各自冻结 seed、输入和数据，配置相同不等于结果重现。
+三个冻结入口：`config/experiment_native_tools_v1.yaml` 是 `historical-reproduction`（temperature 1.0），`config/experiment_recommended_primary_v1.yaml` 是 `recommended-primary`（temperature 0.6），`config/experiment_native_tools_v2.yaml` 是严格状态机和 `human-lexical-v2` 检索的 `strict-native-v2`。v2 是新的实验协议，不回写或替代 native-v1 历史记录；其采样沿用 BF16+xhigh 的历史异常复测配置。各入口均显式设置 top-p 0.95、top-k 20、min-p 0。历史任务还需使用各自冻结 seed、输入和数据，配置相同不等于结果重现。
 
 ## 固定启动
 

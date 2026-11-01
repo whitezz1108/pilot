@@ -151,22 +151,35 @@ def render_tool_surface(*, names: Sequence[str], available: bool, max_tool_round
     for name in names:
         if protocol_version == "2" and name == "search_contract":
             arguments = "query, target_category, cursor (optional)"
-        elif protocol_version == "native-v1" and name == "search_contract":
+        elif protocol_version in {"native-v1", "native-v2"} and name == "search_contract":
             arguments = "query, target_category"
-        elif protocol_version == "native-v1" and name == "next_search_page":
+        elif protocol_version in {"native-v1", "native-v2"} and name == "next_search_page":
             arguments = "cursor"
         else:
             arguments = ", ".join(TOOL_ARGUMENTS[name])
         lines.append(f"- `{name}({arguments})`")
-    if protocol_version == "native-v1":
+    if protocol_version in {"native-v1", "native-v2"}:
         lines.extend(
             [
                 "",
                 "Use the provided native tool interface for a tool call; do not write a `tool_request` JSON envelope in normal content.",
                 "A tool call and a final answer are mutually exclusive. When ready to submit, return the final answer fields directly without a `final_answer` wrapper.",
-                f"You may request at most {max_tool_rounds} tools.",
+                (
+                    f"You may request at most {max_tool_rounds} tools. Each assistant response may request exactly one tool."
+                    if protocol_version == "native-v2"
+                    else f"You may request at most {max_tool_rounds} tools."
+                ),
                 "Search returns five ranked snippets by default. Continue only with next_search_page(next_cursor); the cursor already binds the original query and target category.",
-                "A snippet is not a full source opening. Open evidence with open_source_span(paragraph_id).",
+                *(
+                    [
+                        "In native-v2, a continuation cursor is single-use and next_search_page is callable only while the native tool interface exposes it.",
+                        "The listed tools describe capabilities; on each response, call only the exact schemas currently exposed by the native interface.",
+                        "In native-v2, open_source_span appears only after search has returned an eligible paragraph id, and it may open only IDs enumerated by the current native schema.",
+                        "Search is broad lexical recall with an exact-phrase ranking bonus, not a strict phrase filter. Quotation marks do not require an exact match, and scores are query-local ranking signals rather than probabilities.",
+                    ]
+                    if protocol_version == "native-v2" else []
+                ),
+                "Search results expose verbatim contract excerpts. For formal full-paragraph reading and verification provenance, use open_source_span(paragraph_id) on a valid paragraph in the current authorized contract.",
             ]
         )
         return "\n".join(lines)
@@ -269,6 +282,35 @@ def tool_result_payload(
     return payload
 
 
+def _assert_native_call_is_offered(call: ModelToolCall, request: ModelRequest) -> None:
+    """Fail closed if a strict native call is outside this turn's schema.
+
+    Providers normally enforce function schemas, but the workflow also accepts
+    normalized responses from adapters and scripted clients.  Rechecking the
+    small closed schema subset here makes the state machine authoritative in
+    every execution path.
+    """
+    definition = next((tool for tool in request.tools if tool.name == call.name), None)
+    if definition is None:
+        raise ToolProtocolViolation(f"tool {call.name!r} was not offered on this turn")
+    schema = definition.input_schema
+    properties = schema.get("properties", {})
+    required = set(schema.get("required", ()))
+    keys = set(call.arguments)
+    if keys != required or (schema.get("additionalProperties") is False and keys - set(properties)):
+        raise ToolProtocolViolation(
+            f"tool {call.name!r} arguments do not match the offered closed schema"
+        )
+    for name, value in call.arguments.items():
+        rule = properties[name]
+        if rule.get("type") == "string" and not isinstance(value, str):
+            raise ToolProtocolViolation(f"tool {call.name!r}.{name} must be a string")
+        if "enum" in rule and value not in rule["enum"]:
+            raise ToolProtocolViolation(
+                f"tool {call.name!r}.{name} is not one of the currently offered values"
+            )
+
+
 @dataclass(frozen=True)
 class ToolLoopResult:
     """The outcome of one node's turns: the final object plus everything it did."""
@@ -307,6 +349,7 @@ def run_tool_loop(
     max_tool_rounds: int = MAX_TOOL_ROUNDS,
     audit: Callable[[ModelRequest], None] | None = None,
     tool_transport: ToolTransport = "legacy-text",
+    strict_native_state_machine: bool = False,
 ) -> ToolLoopResult:
     """Run one node invocation to a final structured answer.
 
@@ -348,8 +391,24 @@ def run_tool_loop(
                 ),
             )
         request = build_request(request_messages)
+        if strict_native_state_machine and not final_only:
+            if tool_transport != "native":
+                raise ValueError("strict native state machine requires native tool transport")
+            # The offered schemas are the whole state transition surface.  In
+            # particular, a continuation is absent until the tool layer has
+            # issued a cursor, and parallel calls are disabled at the provider.
+            definitions = tools.tool_definitions if tools is not None else ()
+            request = request.model_copy(
+                update={
+                    "tools": definitions,
+                    "tool_choice": "auto" if definitions else None,
+                    "parallel_tool_calls": False if definitions else None,
+                }
+            )
         if final_only:
-            request = request.model_copy(update={"tools": (), "tool_choice": None})
+            request = request.model_copy(
+                update={"tools": (), "tool_choice": None, "parallel_tool_calls": None}
+            )
         if audit is not None:
             audit(request)
 
@@ -379,6 +438,13 @@ def run_tool_loop(
             try:
                 decision = decide_agent_response(response, transport=tool_transport)
                 if isinstance(decision, ToolCallDecision):
+                    if strict_native_state_machine and len(decision.calls) != 1:
+                        raise ToolProtocolViolation(
+                            "native-v2 permits exactly one tool call per assistant response; "
+                            f"received {len(decision.calls)}"
+                        )
+                    if strict_native_state_machine:
+                        _assert_native_call_is_offered(decision.calls[0], request)
                     response_ids = [call.call_id for call in decision.calls]
                     duplicate_ids = {
                         call_id

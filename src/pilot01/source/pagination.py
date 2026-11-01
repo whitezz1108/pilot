@@ -5,7 +5,7 @@ from __future__ import annotations
 import secrets
 
 from ..model.tool_protocol import ToolDefinition
-from .index import excerpt, tokenize
+from .index import excerpt, select_lexical_excerpt, tokenize
 from .tools import (
     OPEN_SOURCE_SPAN,
     SEARCH_CONTRACT,
@@ -21,18 +21,18 @@ PAGED_SOURCE_TOOL_NAMES = (SEARCH_CONTRACT, NEXT_SEARCH_PAGE, OPEN_SOURCE_SPAN)
 
 
 class PagedSourceTools(SourceTools):
-    """Paged source access in legacy or native-v1 protocol form.
+    """Paged source access in legacy, native-v1, or strict native-v2 form.
 
     Legacy protocol 2 keeps the historical combined
     ``search_contract(query, target_category, cursor?)`` shape for frozen runs.
-    Native-v1 makes continuation a separate ``next_search_page(cursor)`` tool,
+    Native-v1/v2 make continuation a separate ``next_search_page(cursor)`` tool,
     so a model cannot pair a cursor with a different query or target.
     """
 
     def __init__(self, *, target_categories, protocol_version="2", **kwargs):
         super().__init__(**kwargs)
-        if protocol_version not in {"2", "native-v1"}:
-            raise ValueError("paged source protocol must be '2' or 'native-v1'")
+        if protocol_version not in {"2", "native-v1", "native-v2"}:
+            raise ValueError("paged source protocol must be '2', 'native-v1', or 'native-v2'")
         self.protocol_version = protocol_version
         self.target_categories = tuple(target_categories)
         self._reset_pages()
@@ -41,22 +41,44 @@ class PagedSourceTools(SourceTools):
     def tool_names(self):
         return (
             PAGED_SOURCE_TOOL_NAMES
-            if self.protocol_version == "native-v1"
+            if self.protocol_version in {"native-v1", "native-v2"}
             else super().tool_names
         )
 
     @property
     def tool_definitions(self) -> tuple[ToolDefinition, ...]:
-        if self.protocol_version != "native-v1":
+        if self.protocol_version not in {"native-v1", "native-v2"}:
             return super().tool_definitions
         target_schema = {"type": "string", "enum": list(self.target_categories)}
+        search_description = (
+            "Start a broad lexical search of the current contract for one policy target. "
+            "Returns ranked verbatim excerpts and an opaque next_cursor when another page exists. "
+            "Exact ordered query phrases receive a ranking bonus but are not mandatory filters; "
+            "quotation marks have no special matching semantics, and score is not a probability."
+            if self.protocol_version == "native-v2"
+            else "Start a search of the current contract for one policy target. Returns ranked snippets and an opaque next_cursor when another page exists."
+        )
+        open_definition = super().tool_definitions[1]
+        if self.protocol_version == "native-v2" and self._returned:
+            open_definition = ToolDefinition(
+                name=OPEN_SOURCE_SPAN,
+                description=(
+                    "Open an exact paragraph returned by search in this node invocation. "
+                    "Only the currently enumerated paragraph ids may be opened."
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "paragraph_id": {"type": "string", "enum": sorted(self._returned)}
+                    },
+                    "required": ["paragraph_id"],
+                    "additionalProperties": False,
+                },
+            )
         return (
             ToolDefinition(
                 name=SEARCH_CONTRACT,
-                description=(
-                    "Start a search of the current contract for one policy target. "
-                    "Returns ranked snippets and an opaque next_cursor when another page exists."
-                ),
+                description=search_description,
                 input_schema={
                     "type": "object",
                     "properties": {
@@ -67,20 +89,36 @@ class PagedSourceTools(SourceTools):
                     "additionalProperties": False,
                 },
             ),
-            ToolDefinition(
-                name=NEXT_SEARCH_PAGE,
-                description=(
-                    "Continue the exact search bound to an opaque cursor. "
-                    "Do not supply or change the query or target category."
-                ),
-                input_schema={
-                    "type": "object",
-                    "properties": {"cursor": {"type": "string", "minLength": 1}},
-                    "required": ["cursor"],
-                    "additionalProperties": False,
-                },
+            *(
+                (
+                    ToolDefinition(
+                        name=NEXT_SEARCH_PAGE,
+                        description=(
+                            "Continue the exact search bound to an opaque cursor. "
+                            "Do not supply or change the query or target category."
+                        ),
+                        input_schema={
+                            "type": "object",
+                            "properties": {
+                                "cursor": (
+                                    {"type": "string", "enum": sorted(self._cursors)}
+                                    if self.protocol_version == "native-v2"
+                                    else {"type": "string", "minLength": 1}
+                                )
+                            },
+                            "required": ["cursor"],
+                            "additionalProperties": False,
+                        },
+                    ),
+                )
+                if self.protocol_version == "native-v1" or self._cursors
+                else ()
             ),
-            super().tool_definitions[1],
+            *(
+                (open_definition,)
+                if self.protocol_version == "native-v1" or self._returned
+                else ()
+            ),
         )
 
     def _reset_pages(self):
@@ -101,10 +139,13 @@ class PagedSourceTools(SourceTools):
             raise SourceToolError("target_category must name exactly one policy target")
         return query.strip(), target
 
-    def _cursor_position(self, cursor):
+    def _cursor_position(self, cursor, *, consume=False):
         if not isinstance(cursor, str) or cursor not in self._cursors:
             raise SourceToolError("cursor is unknown or expired in this node invocation")
-        return self._cursors[cursor]
+        position = self._cursors[cursor]
+        if consume:
+            del self._cursors[cursor]
+        return position
 
     def _page(self, *, tool, arguments, key, offset, repeat_first=False):
         document, index = self._require_source()
@@ -118,19 +159,34 @@ class PagedSourceTools(SourceTools):
         next_cursor = None
         if has_more:
             cursor_key = (key, end)
-            if cursor_key not in self._tokens:
+            if cursor_key not in self._tokens or self._tokens[cursor_key] not in self._cursors:
                 token = secrets.token_hex(16)
                 self._tokens[cursor_key] = token
                 self._cursors[token] = (key, end)
             next_cursor = self._tokens[cursor_key]
-        hits = (
-            tuple(
-                SearchHit(
+        def make_hit(paragraph, score):
+            extra = {}
+            rendered_excerpt = excerpt(paragraph.text, tokenize(query), self._excerpt_chars)
+            if index.ranking_version == "human-lexical-v2":
+                rendered_excerpt, relative_start, relative_end, selection = select_lexical_excerpt(
+                    paragraph.text, query, self._excerpt_chars
+                )
+                extra = dict(
+                    **index.diagnostics(paragraph, query),
+                    excerpt_start_char=paragraph.start_char + relative_start,
+                    excerpt_end_char=paragraph.start_char + relative_end,
+                    excerpt_selection=selection,
+                )
+            return SearchHit(
                     paragraph_id=paragraph.paragraph_id,
                     contract_id=document.contract_id,
                     score=round(score, 6),
-                    excerpt=excerpt(paragraph.text, tokenize(query), self._excerpt_chars),
+                    excerpt=rendered_excerpt,
+                    **extra,
                 )
+        hits = (
+            tuple(
+                make_hit(paragraph, score)
                 for paragraph, score in selected
             )
             if not repeat_first
@@ -177,7 +233,7 @@ class PagedSourceTools(SourceTools):
     def _invoke(self, tool, arguments):
         if tool == SEARCH_CONTRACT:
             try:
-                if self.protocol_version == "native-v1":
+                if self.protocol_version in {"native-v1", "native-v2"}:
                     if set(arguments) != {"query", "target_category"}:
                         raise SourceToolError(
                             "search_contract requires exactly query and target_category; "
@@ -224,11 +280,13 @@ class PagedSourceTools(SourceTools):
                     ToolOutcome(tool=tool, arguments=arguments, ok=False, error=str(exc))
                 ), None
 
-        if tool == NEXT_SEARCH_PAGE and self.protocol_version == "native-v1":
+        if tool == NEXT_SEARCH_PAGE and self.protocol_version in {"native-v1", "native-v2"}:
             try:
                 if set(arguments) != {"cursor"}:
                     raise SourceToolError("next_search_page requires exactly cursor")
-                key, offset = self._cursor_position(arguments["cursor"])
+                key, offset = self._cursor_position(
+                    arguments["cursor"], consume=self.protocol_version == "native-v2"
+                )
                 return self._page(
                     tool=tool,
                     arguments=arguments,
@@ -245,7 +303,7 @@ class PagedSourceTools(SourceTools):
     def search_contract(self, query, *, target_category, cursor=None):
         args = {"query": query, "target_category": target_category}
         if cursor is not None:
-            if self.protocol_version == "native-v1":
+            if self.protocol_version in {"native-v1", "native-v2"}:
                 raise SourceToolError(
                     "native-v1 continues searches with next_search_page(cursor)"
                 )
@@ -256,9 +314,21 @@ class PagedSourceTools(SourceTools):
         return outcome
 
     def next_search_page(self, cursor):
-        if self.protocol_version != "native-v1":
-            raise SourceToolError("next_search_page is available only in native-v1")
+        if self.protocol_version not in {"native-v1", "native-v2"}:
+            raise SourceToolError("next_search_page is available only in native protocols")
         outcome, _ = self._invoke(NEXT_SEARCH_PAGE, {"cursor": cursor})
         if not outcome.ok:
             raise SourceToolError(outcome.error)
         return outcome
+
+    def _open(self, paragraph_id):
+        """Native-v2 opens only IDs returned by this node invocation's search."""
+        if self.protocol_version == "native-v2" and isinstance(paragraph_id, str):
+            candidate = paragraph_id.strip()
+            document, _ = self._require_source()
+            if document.paragraph(candidate) is not None and candidate not in self._returned:
+                raise SourceToolError(
+                    f"{candidate!r} was not returned by search in this node invocation; "
+                    "search it before opening it"
+                )
+        return super()._open(paragraph_id)

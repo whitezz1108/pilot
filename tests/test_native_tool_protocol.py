@@ -103,6 +103,24 @@ def test_native_wire_carries_closed_tool_schemas_without_json_response_mode():
     )
 
 
+def test_native_v2_wire_explicitly_disables_parallel_tool_calls():
+    tools = SourceTools(node="manager", library=sample_case.build_source_library())
+    request = ModelRequest(
+        messages=(ModelMessage(role="user", content="Assess."),),
+        tools=tools.tool_definitions,
+        tool_choice="auto",
+        parallel_tool_calls=False,
+        params=PARAMS,
+        role="manager",
+        prompt_version="manager-native-v2",
+    )
+    client = OpenAICompatibleClient(
+        base_url="https://offline.invalid/v1", api_key="offline-placeholder",
+        tool_transport="native", transport=lambda *_: b"",
+    )
+    assert json.loads(client.build_request(request).data)["parallel_tool_calls"] is False
+
+
 def test_full_sampling_policy_is_sent_and_fingerprinted():
     request = ModelRequest(
         messages=(ModelMessage(role="user", content="Assess."),),
@@ -637,3 +655,120 @@ def test_native_pagination_binds_query_and_target_inside_cursor():
             target_category=TARGETS[1],
             cursor=cursor,
         )
+
+
+def test_native_v2_pagination_exposes_only_live_single_use_cursor():
+    _, registry, _ = materials()
+    tools = PagedSourceTools(
+        node="manager", library=registry.library, target_categories=TARGETS,
+        top_k=2, protocol_version="native-v2",
+    )
+    tools.begin_invocation(contract_id="CONTRACT-001", available=True)
+    assert [tool.name for tool in tools.tool_definitions] == ["search_contract"]
+    page = tools.search_contract("administrative", target_category=TARGETS[0])
+    first_cursor = page.payload["next_cursor"]
+    assert first_cursor
+    continuation = next(tool for tool in tools.tool_definitions if tool.name == NEXT_SEARCH_PAGE)
+    assert continuation.input_schema["properties"]["cursor"]["enum"] == [first_cursor]
+    opener = next(tool for tool in tools.tool_definitions if tool.name == "open_source_span")
+    assert opener.input_schema["properties"]["paragraph_id"]["enum"] == sorted(page.result_ids)
+    hidden_id = next(
+        paragraph_id for paragraph_id in registry.library.get("CONTRACT-001").paragraph_ids()
+        if paragraph_id not in page.result_ids
+    )
+    with pytest.raises(SourceToolError, match="was not returned by search"):
+        tools.open_source_span(hidden_id)
+
+    # A cursor is a state transition token, not a reusable string.  Consume
+    # every offered token, then pagination must disappear entirely.
+    while page.payload["next_cursor"]:
+        page = tools.next_search_page(page.payload["next_cursor"])
+    assert NEXT_SEARCH_PAGE not in [tool.name for tool in tools.tool_definitions]
+    with pytest.raises(SourceToolError, match="unknown or expired"):
+        tools.next_search_page(first_cursor)
+
+
+def test_target_category_is_an_audit_label_not_a_ranking_feature():
+    _, registry, _ = materials()
+    tools = PagedSourceTools(
+        node="manager", library=registry.library, target_categories=TARGETS,
+        top_k=5, protocol_version="native-v2",
+        search_ranker_version="human-lexical-v2",
+    )
+    tools.begin_invocation(contract_id="CONTRACT-001", available=True)
+    first = tools.search_contract("administrative", target_category=TARGETS[0])
+    second = tools.search_contract("administrative", target_category=TARGETS[1])
+    assert first.result_ids == second.result_ids
+    assert [result["score"] for result in first.payload["results"]] == [
+        result["score"] for result in second.payload["results"]
+    ]
+
+
+def test_native_v2_rejects_a_parallel_batch_before_any_dispatch():
+    tools = SourceTools(node="manager", library=sample_case.build_source_library())
+    tools.begin_invocation(contract_id=sample_case.CONTRACT_ID, available=True)
+    batch = (
+        native_call(call_id="call-one"),
+        native_call(call_id="call-two", arguments={"query": "termination"}),
+    )
+    client = ScriptedModelClient((batch,), tool_transport="native")
+    log = ModelCallLog()
+
+    def build_request(messages):
+        return ModelRequest(messages=messages, tools=tools.tool_definitions, tool_choice="auto",
+                            params=PARAMS, role="manager", prompt_version="manager-native-v2")
+
+    with pytest.raises(ToolLoopError, match="exactly one tool call"):
+        run_tool_loop(client=client, build_request=build_request,
+                      initial_messages=(ModelMessage(role="user", content="Assess."),),
+                      output_model=ManagerOutput, repair=None, call_log=log,
+                      expected_role="manager", tools=tools, tool_transport="native",
+                      strict_native_state_machine=True)
+    assert not tools.log.records
+    assert client.requests[0].parallel_tool_calls is False
+    assert log.records[0].parse_error.startswith("tool_protocol_violation:")
+
+
+def test_native_v2_last_budget_rejects_batch_before_second_call():
+    tools = SourceTools(node="manager", library=sample_case.build_source_library())
+    tools.begin_invocation(contract_id=sample_case.CONTRACT_ID, available=True)
+    first = native_call(call_id="call-first")
+    batch = (
+        native_call(call_id="call-last-a", arguments={"query": "termination"}),
+        native_call(call_id="call-last-b", arguments={"query": "notice"}),
+    )
+    client = ScriptedModelClient(((first,), batch), tool_transport="native")
+
+    def build_request(messages):
+        return ModelRequest(messages=messages, tools=tools.tool_definitions, tool_choice="auto",
+                            params=PARAMS, role="manager", prompt_version="manager-native-v2")
+
+    with pytest.raises(ToolLoopError, match="exactly one tool call"):
+        run_tool_loop(client=client, build_request=build_request,
+                      initial_messages=(ModelMessage(role="user", content="Assess."),),
+                      output_model=ManagerOutput, repair=None, call_log=None,
+                      expected_role="manager", tools=tools, tool_transport="native",
+                      max_tool_rounds=2, strict_native_state_machine=True)
+    assert len(tools.log.records) == 1
+
+
+def test_native_v2_rejects_fabricated_cursor_before_tool_execution():
+    _, registry, _ = materials()
+    tools = PagedSourceTools(node="manager", library=registry.library,
+                             target_categories=TARGETS, protocol_version="native-v2")
+    tools.begin_invocation(contract_id="CONTRACT-001", available=True)
+    client = ScriptedModelClient(((native_call(
+        name=NEXT_SEARCH_PAGE, arguments={"cursor": "invalid_check_only"}, call_id="bad-cursor"),),),
+        tool_transport="native")
+
+    def build_request(messages):
+        return ModelRequest(messages=messages, tools=tools.tool_definitions, tool_choice="auto",
+                            params=PARAMS, role="manager", prompt_version="manager-native-v2")
+
+    with pytest.raises(ToolLoopError, match="was not offered"):
+        run_tool_loop(client=client, build_request=build_request,
+                      initial_messages=(ModelMessage(role="user", content="Assess."),),
+                      output_model=ManagerOutput, repair=None, call_log=None,
+                      expected_role="manager", tools=tools, tool_transport="native",
+                      strict_native_state_machine=True)
+    assert not tools.log.records

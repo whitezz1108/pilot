@@ -204,7 +204,8 @@ def make_llm_compliance_node(
         validator_version=runtime.validator_version if runtime is not None else None,
         enforce_verification=runtime.verification_mode != "audit_only" if runtime is not None else True,
         tool_transport=(
-            "native" if runtime is not None and runtime.tool_protocol == "native-v1" else "legacy-text"
+            "native" if runtime is not None and runtime.tool_protocol in {"native-v1", "native-v2"} else "legacy-text"
         ),
+        strict_native_state_machine=runtime is not None and runtime.tool_protocol == "native-v2",
     )
 

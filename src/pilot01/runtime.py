@@ -18,7 +18,10 @@ class RuntimeConfig(BaseModel):
     max_tool_requests_per_node: int = Field(default=16, ge=1)
     page_size: int = Field(default=5, ge=1, le=20)
     excerpt_chars: int = Field(default=400, ge=80, le=2000)
-    tool_protocol: Literal["2", "native-v1"] = "2"
+    tool_protocol: Literal["2", "native-v1", "native-v2"] = "2"
+    # Frozen runs retain BM25 v1.  v2 adds deterministic phrase, coverage and
+    # proximity signals without importing a learned or external retriever.
+    search_ranker_version: Literal["bm25-v1", "human-lexical-v2"] = "bm25-v1"
     validator_version: Literal["validator_v3"] = "validator_v3"
     # Omit the legacy default when serializing historical frozen plans.
     verification_mode: Literal["enforce", "audit_only"] = Field(

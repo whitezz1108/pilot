@@ -26,12 +26,14 @@ from pilot01.source import (
     ContractDocument,
     SourceError,
     SourceLibrary,
+    SourceParagraph,
     SourceToolError,
     SourceTools,
     ToolCallLog,
     build_document,
     document_key,
     is_paragraph_id,
+    select_lexical_excerpt,
     tokenize,
 )
 from pilot01.source.document import PARAGRAPH_ID_RE
@@ -384,7 +386,83 @@ def test_the_index_is_built_from_paragraph_text_alone():
     import inspect
 
     signature = inspect.signature(BM25Index.__init__)
-    assert list(signature.parameters) == ["self", "paragraphs", "k1", "b"]
+    assert list(signature.parameters) == ["self", "paragraphs", "k1", "b", "ranking_version"]
+
+
+def test_human_lexical_v2_prefers_phrase_coverage_and_exposes_why():
+    paragraphs = (
+        SourceParagraph(paragraph_id="a:p0000", contract_id="a", ordinal=0,
+                        text="Control is discussed after a later change in administration.",
+                        start_char=0, end_char=58),
+        SourceParagraph(paragraph_id="a:p0001", contract_id="a", ordinal=1,
+                        text="A change of control requires written notice.",
+                        start_char=59, end_char=103),
+    )
+    index = BM25Index(paragraphs, ranking_version="human-lexical-v2")
+    first = index.search("the change of control", top_k=2)
+    second = index.search("the change of control", top_k=2)
+    assert first == second
+    assert first[0][0].paragraph_id == "a:p0001"
+    diagnostic = index.diagnostics(first[0][0], "the change of control")
+    assert diagnostic == {
+        "matched_terms": ("change", "control"),
+        "term_coverage": 1.0,
+        "exact_phrase": True,
+        "proximity_tokens": 3,
+    }
+
+
+def test_phrase_tokens_preserve_order_internal_stopwords_and_repetition():
+    paragraph = SourceParagraph(
+        paragraph_id="a:p0000", contract_id="a", ordinal=0,
+        text="The transfer includes all or substantially all assets of the company.",
+        start_char=0, end_char=69,
+    )
+    index = BM25Index((paragraph,), ranking_version="human-lexical-v2")
+    diagnostic = index.diagnostics(paragraph, "the all or substantially all assets")
+    assert diagnostic["matched_terms"] == ("all", "substantially", "assets")
+    assert diagnostic["exact_phrase"] is True
+
+
+def test_v2_excerpt_prefers_exact_phrase_and_records_exact_offsets():
+    prefix = "in the event of " * 60
+    phrase = "event of a change of control requires written consent"
+    text = prefix + phrase + " before closing"
+    body, start, end, selection = select_lexical_excerpt(
+        text, "in the event of a change of control", width=120
+    )
+    assert selection == "exact_phrase"
+    assert "change of control" in body
+    assert body == text[start:end]
+    assert len(body) <= 120
+
+
+def test_v2_excerpt_uses_distinct_content_coverage_not_stopword_frequency():
+    noisy = "in the event of " * 40
+    substantive = "assignment and control require consent"
+    text = noisy + substantive + " after notice"
+    body, start, end, selection = select_lexical_excerpt(
+        text, "in the event of assignment control consent", width=100
+    )
+    assert selection == "content_terms"
+    assert all(term in body for term in ("assignment", "control", "consent"))
+    assert body == text[start:end]
+    assert len(body) <= 100
+
+
+def test_human_lexical_v2_tool_payload_carries_rank_diagnostics():
+    hits = tools_for(search_ranker_version="human-lexical-v2").search_contract(
+        "change of control"
+    )
+    assert hits
+    payload = hits[0].model_dump()
+    assert {
+        "matched_terms", "term_coverage", "exact_phrase", "proximity_tokens",
+        "excerpt_start_char", "excerpt_end_char", "excerpt_selection",
+    } <= set(payload)
+    assert hits[0].excerpt == sample_case.CONTRACT_TEXT[
+        payload["excerpt_start_char"]:payload["excerpt_end_char"]
+    ]
 
 
 def test_top_k_of_zero_returns_nothing():

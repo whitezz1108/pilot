@@ -46,7 +46,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..model.tool_protocol import ToolDefinition
 from .document import ContractDocument, SourceError, build_document, is_paragraph_id
-from .index import BM25Index, EXCERPT_CHARS, excerpt, tokenize
+from .index import BM25Index, EXCERPT_CHARS, excerpt, select_lexical_excerpt, tokenize
 from .ledger import EvidenceAccess, EvidenceLedger
 
 __all__ = [
@@ -114,6 +114,15 @@ class SearchHit(BaseModel):
     contract_id: str
     score: float
     excerpt: str
+    # Native v2 returns the deterministic reasons for its rank.  They are
+    # omitted from frozen v1 records to keep their wire format unchanged.
+    matched_terms: tuple[str, ...] | None = Field(default=None, exclude_if=lambda v: v is None)
+    term_coverage: float | None = Field(default=None, exclude_if=lambda v: v is None)
+    exact_phrase: bool | None = Field(default=None, exclude_if=lambda v: v is None)
+    proximity_tokens: int | None = Field(default=None, exclude_if=lambda v: v is None)
+    excerpt_start_char: int | None = Field(default=None, exclude_if=lambda v: v is None)
+    excerpt_end_char: int | None = Field(default=None, exclude_if=lambda v: v is None)
+    excerpt_selection: str | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class SourceSpan(BaseModel):
@@ -342,6 +351,7 @@ class SourceTools:
         log: ToolCallLog | None = None,
         top_k: int = DEFAULT_TOP_K,
         excerpt_chars: int = EXCERPT_CHARS,
+        search_ranker_version: str = "bm25-v1",
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._node = node
@@ -349,6 +359,7 @@ class SourceTools:
         self._log = log if log is not None else ToolCallLog()
         self._top_k = top_k
         self._excerpt_chars = excerpt_chars
+        self._search_ranker_version = search_ranker_version
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._timing = None
         self._parent_model_call_id = None
@@ -421,7 +432,7 @@ class SourceTools:
             ),
             ToolDefinition(
                 name=OPEN_SOURCE_SPAN,
-                description="Open one paragraph returned by contract search and read its exact text.",
+                description="Open a specified paragraph that exists in the current authorized contract.",
                 input_schema={
                     "type": "object",
                     "properties": {
@@ -465,7 +476,10 @@ class SourceTools:
         self._run_id = run_id
         if self._available and contract_id is not None:
             self._document = self._library.get(contract_id)
-            self._index = BM25Index(self._document.paragraphs)
+            self._index = BM25Index(
+                self._document.paragraphs,
+                ranking_version=self._search_ranker_version,
+            )
 
     # -- the two tools -----------------------------------------------------
 
@@ -631,13 +645,28 @@ class SourceTools:
             raise SourceToolError("search_contract needs a non-empty 'query' string")
         terms = tokenize(query)
         hits = index.search(query, top_k=self._top_k)
-        results = tuple(
-            SearchHit(
+        def make_hit(paragraph, score):
+            extra = {}
+            rendered_excerpt = excerpt(paragraph.text, terms, self._excerpt_chars)
+            if index.ranking_version == "human-lexical-v2":
+                rendered_excerpt, relative_start, relative_end, selection = select_lexical_excerpt(
+                    paragraph.text, query, self._excerpt_chars
+                )
+                extra = dict(
+                    **index.diagnostics(paragraph, query),
+                    excerpt_start_char=paragraph.start_char + relative_start,
+                    excerpt_end_char=paragraph.start_char + relative_end,
+                    excerpt_selection=selection,
+                )
+            return SearchHit(
                 paragraph_id=paragraph.paragraph_id,
                 contract_id=paragraph.contract_id,
                 score=round(score, 6),
-                excerpt=excerpt(paragraph.text, terms, self._excerpt_chars),
+                excerpt=rendered_excerpt,
+                **extra,
             )
+        results = tuple(
+            make_hit(paragraph, score)
             for paragraph, score in hits
         )
         self._ledger.record_search(query, [hit.paragraph_id for hit in results])
@@ -678,6 +707,8 @@ class SourceTools:
             paragraph = self._document.paragraph(pid) if self._document else None
             result = result_metadata.get(pid, {})
             locators.append(dict(paragraph_id=pid, rank=result.get("rank", rank), score=result.get("score"),
+                                 excerpt_start_char=result.get("excerpt_start_char"),
+                                 excerpt_end_char=result.get("excerpt_end_char"),
                                  start_char=paragraph.start_char if paragraph else None,
                                  end_char=paragraph.end_char if paragraph else None))
         self._log.append(
@@ -702,7 +733,7 @@ class SourceTools:
                 responded_at=now,
                 page_metadata=(
                     {k: v for k, v in outcome.payload.items() if k != "results"}
-                    if getattr(self, "protocol_version", "1") in {"2", "native-v1"}
+                    if getattr(self, "protocol_version", "1") in {"2", "native-v1", "native-v2"}
                     and outcome.tool in {SEARCH_CONTRACT, "next_search_page"}
                     else None
                 ),

@@ -43,7 +43,7 @@ from .document import (
     is_paragraph_id,
     sha256_text,
 )
-from .index import BM25Index, excerpt, tokenize
+from .index import BM25Index, excerpt, select_lexical_excerpt, tokenize
 from .ledger import EvidenceAccess, EvidenceClass, EvidenceLedger
 from .tools import (
     DEFAULT_TOP_K,
@@ -90,6 +90,7 @@ __all__ = [
     # index
     "BM25Index",
     "excerpt",
+    "select_lexical_excerpt",
     "tokenize",
     # ledger
     "EvidenceAccess",

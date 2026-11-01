@@ -122,6 +122,13 @@ def test_native_tool_profile_and_endpoint_are_explicit(tmp_path, monkeypatch):
     assert pool(role="manager", job=job).tool_transport == "native"
 
 
+def test_native_v2_profile_is_an_explicit_new_protocol_and_ranker():
+    profile = ExperimentProfile(CONFIG / "experiment_native_tools_v2.yaml")
+    assert profile.runtime.tool_protocol == "native-v2"
+    assert profile.runtime.search_ranker_version == "human-lexical-v2"
+    assert profile.runtime.max_tool_requests_per_node == 16
+
+
 @pytest.mark.parametrize("filename,temperature", [
     ("experiment_native_tools_v1.yaml", 1.0),
     ("experiment_recommended_primary_v1.yaml", 0.6),
