@@ -2,6 +2,10 @@
 
 本地可视化入口：双击 **启动实验操作台.cmd**，或运行 `scripts/Start-ExperimentConsole.ps1`。可选择run数量、D条件与并发，实时查看节点进度、详情并导出结果。默认预选64个run、64并发，点击开始才调用API。当前接入旧40份的D版本开发预试，详见[操作台说明](docs/experiment_console.md)。
 
+本地模型运维入口：双击 **启动模型监控面板.cmd**。该只读页面通过已有的 `ssh t640` 配置核对实际 GPU、容器、SGLang、模型、parser、采样配置和七层清单，不依赖 YAML 自报状态；详见[模型监控面板说明](tools/model-ops-dashboard/README.md)。
+
+2026-11-01 第一阶段基线的文件整理与上传边界见[仓库基线说明](docs/repository_baseline_20261101.md)；后续功率、并发和低精度测试矩阵见[工程实验计划](docs/engineering_benchmark_plan_20261101.md)。
+
 ## Clean v2：检查知情程度实验
 
 2026-10-18新增[并发执行与第二个API配置](docs/concurrent_execution_v1.md)：run命令添加 `--execution-config config/execution_v1.yaml` 可启用总计32路试运行并发、账号额度分组降速和有限HTTP重试。两个key暂按共享账号额度处理，不能套用DeepSeek官方2500额度到Paratera。旧命令默认仍串行，A/V/D最终矩阵待确认，尚未启动正式实验。

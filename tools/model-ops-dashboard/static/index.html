@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Qwen3.8-27B 与 SGLang 本地只读运行监控面板">
+  <title>Qwen Operations Console</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="noise" aria-hidden="true"></div>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">Q</span>
+      <div><strong>Qwen Operations</strong><span>LOCAL CONTROL PLANE</span></div>
+    </div>
+    <div class="top-actions">
+      <span id="connection-pill" class="pill waiting"><i></i>正在连接</span>
+      <button id="refresh-button" type="button">立即刷新</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <p class="eyebrow">MODEL SERVICE / LIVE OBSERVABILITY</p>
+        <h1 id="model-title">Qwen3.8-27B</h1>
+        <p id="service-summary" class="hero-copy">正在读取远程推理服务状态…</p>
+      </div>
+      <div class="hero-meta">
+        <div><span>远程主机</span><strong id="remote-host">—</strong></div>
+        <div><span>采集延迟</span><strong id="latency">—</strong></div>
+        <div><span>最后更新</span><strong id="updated-at">—</strong></div>
+      </div>
+    </section>
+
+    <section id="alert" class="alert hidden" role="alert"></section>
+
+    <section class="metric-strip" aria-label="核心运行指标">
+      <article><span>推理框架</span><strong id="framework">—</strong><small id="frontend">—</small></article>
+      <article><span>上下文长度</span><strong id="context-length">—</strong><small>tokens</small></article>
+      <article><span>并发上限</span><strong id="concurrency">—</strong><small>running requests</small></article>
+      <article><span>张量并行</span><strong id="tp-size">—</strong><small>TP</small></article>
+      <article><span>服务端口</span><strong>30002</strong><small>loopback only</small></article>
+    </section>
+
+    <section class="section-block">
+      <div class="section-heading">
+        <div><p class="eyebrow">HARDWARE TELEMETRY</p><h2>GPU 实时状态</h2></div>
+        <span class="subtle">浏览器保留最近 60 次采样趋势</span>
+      </div>
+      <div id="gpu-grid" class="gpu-grid"></div>
+    </section>
+
+    <section class="two-column">
+      <article class="panel">
+        <div class="panel-heading"><div><p class="eyebrow">ENGINE</p><h2>模型与推理框架</h2></div><span id="config-match" class="status-tag">检查中</span></div>
+        <dl id="engine-settings" class="settings-list"></dl>
+      </article>
+      <article class="panel">
+        <div class="panel-heading"><div><p class="eyebrow">RUNTIME</p><h2>容器与服务</h2></div><span id="container-status" class="status-tag">—</span></div>
+        <dl id="runtime-settings" class="settings-list"></dl>
+      </article>
+    </section>
+
+    <section class="panel sampling-panel">
+      <div class="panel-heading"><div><p class="eyebrow">SAMPLING PROFILES</p><h2>采样配置用途</h2></div><span class="subtle">请求显式覆盖服务默认值</span></div>
+      <div class="table-wrap"><table><thead><tr><th>配置</th><th>用途</th><th>Temperature</th><th>Top-p</th><th>Top-k</th><th>Min-p</th></tr></thead><tbody id="sampling-table"></tbody></table></div>
+    </section>
+
+    <section class="two-column lower-grid">
+      <article class="panel">
+        <div class="panel-heading"><div><p class="eyebrow">PROCESSES</p><h2>GPU 计算进程</h2></div></div>
+        <div class="table-wrap"><table><thead><tr><th>GPU</th><th>PID</th><th>进程</th><th>显存</th></tr></thead><tbody id="process-table"></tbody></table></div>
+      </article>
+      <article class="panel">
+        <div class="panel-heading"><div><p class="eyebrow">INTEGRITY</p><h2>配置身份</h2></div></div>
+        <dl id="integrity-settings" class="settings-list"></dl>
+      </article>
+    </section>
+
+    <section class="panel raw-panel">
+      <details>
+        <summary>查看完整启动命令与原始状态 JSON</summary>
+        <h3>容器启动命令</h3>
+        <pre id="container-command">—</pre>
+        <h3>原始状态</h3>
+        <pre id="raw-json">—</pre>
+      </details>
+    </section>
+  </main>
+
+  <footer><span>只读本地面板 · 数据经 SSH 从 t640 获取</span><span id="refresh-note">每 5 秒刷新</span></footer>
+  <script src="/app.js" defer></script>
+</body>
+</html>

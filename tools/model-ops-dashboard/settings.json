@@ -1,0 +1,40 @@
+{
+  "ssh_host": "t640",
+  "container_name": "pilot-native-seven-layer-v1",
+  "endpoint": "http://127.0.0.1:30002",
+  "refresh_seconds": 5,
+  "manifest_path": "../../config/native-seven-layer-manifest.json",
+  "repository_path": "../..",
+  "expected": {
+    "model": "Qwen3.8-27B",
+    "dtype": "bfloat16",
+    "quantization": null,
+    "context_length": 49152,
+    "tp_size": 1,
+    "mem_fraction_static": 0.8,
+    "max_running_requests": 1,
+    "reasoning_parser": "qwen3",
+    "tool_call_parser": "qwen3_coder",
+    "speculative_num_steps": 3,
+    "speculative_num_draft_tokens": 4,
+    "disable_radix_cache": true,
+    "gpu_index": 2,
+    "power_limit_w": 200
+  },
+  "sampling_profiles": {
+    "historical-reproduction": {
+      "purpose": "复现五次历史异常",
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "top_k": 20,
+      "min_p": 0.0
+    },
+    "recommended-primary": {
+      "purpose": "后续正式实验",
+      "temperature": 0.6,
+      "top_p": 0.95,
+      "top_k": 20,
+      "min_p": 0.0
+    }
+  }
+}

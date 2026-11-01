@@ -28,3 +28,4 @@ outputs/
 .chart-data-*/
 outputs_snapshot_*/
 *.pptx
+*.lnk
