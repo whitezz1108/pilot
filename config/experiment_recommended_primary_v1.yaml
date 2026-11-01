@@ -1,0 +1,7 @@
+# Recommended primary sampling with native tool protocol.
+experiment_version: "3"
+conditions: conditions_v3.yaml
+runtime: runtime_native_tools_v1.yaml
+models: models_recommended_primary_v1.yaml
+workflow: workflow_v1.yaml
+policy: policies/policy_v2.yaml

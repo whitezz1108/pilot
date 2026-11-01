@@ -94,7 +94,7 @@ def test_real_node_sixteen_tools_then_answer_or_seventeenth_refused(extra_reques
         policy=case.policy, gold_evidence_offsets=case.gold_evidence_offsets, experiment_version="2")
     view = node.build_input(state, 0)
     if extra_request:
-        with pytest.raises(ProtocolError, match="more than 16"):
+        with pytest.raises(ProtocolError, match="only 0 remaining in its 16-tool budget"):
             node.run(view)
     else:
         assert node.run(view).output.decision.value == "ESCALATE"

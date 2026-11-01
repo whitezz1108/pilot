@@ -15,10 +15,23 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "config"
 
 
+def dual_endpoint_settings(tmp_path):
+    """Synthetic two-endpoint topology for routing; production config is single-slot."""
+    path = tmp_path / "dual-endpoints.yaml"
+    path.write_text("""max_parallel_runs: 1
+http_retries: 0
+role_slots: {manager: 1, compliance: 2}
+endpoints:
+  - {slot: 1, max_in_flight: 1}
+  - {slot: 2, max_in_flight: 1}
+""", encoding="utf-8")
+    return path
+
+
 def test_engineering_profile_routes_role_requests_and_budgets(tmp_path, monkeypatch):
     credentials(monkeypatch)
     profile = ExperimentProfile(CONFIG / "experiment_engineering_dual_gpu_v1.yaml")
-    config_path = CONFIG / "execution_engineering_dual_gpu_v1.yaml"
+    config_path = dual_endpoint_settings(tmp_path)
     settings = ExecutionSettings.load(config_path)
     seen = []
 
@@ -43,7 +56,7 @@ def test_engineering_profile_routes_role_requests_and_budgets(tmp_path, monkeypa
                 assert url == f"https://{host}.example/v1/chat/completions"
                 assert auth == f"Bearer {key}"
                 assert payload["model"] == profile.models.for_role(role).model_id
-                assert payload["max_tokens"] == 16384
+                assert payload["max_tokens"] == 32768
                 assert timeout == 360.0
 
     plan = SimpleNamespace(fingerprint=lambda: "engineering-plan")
@@ -109,6 +122,18 @@ def test_native_tool_profile_and_endpoint_are_explicit(tmp_path, monkeypatch):
     assert pool(role="manager", job=job).tool_transport == "native"
 
 
+@pytest.mark.parametrize("filename,temperature", [
+    ("experiment_native_tools_v1.yaml", 1.0),
+    ("experiment_recommended_primary_v1.yaml", 0.6),
+])
+def test_native_sampling_profiles_are_explicit(filename, temperature):
+    profile = ExperimentProfile(CONFIG / filename)
+    assert profile.runtime.tool_protocol == "native-v1"
+    for role in ("manager", "compliance"):
+        params = profile.models.for_role(role)
+        assert (params.temperature, params.top_p, params.top_k, params.min_p) == (temperature, 0.95, 20, 0.0)
+
+
 def test_engineering_failure_is_not_sent_to_other_role_endpoint(tmp_path, monkeypatch):
     credentials(monkeypatch)
     from pilot01.model.client import ModelClientError
@@ -150,14 +175,14 @@ def test_workflow_uses_role_endpoints_through_real_factory(tmp_path, monkeypatch
         return envelope(next(responses[role]))
 
     paths = ExperimentPaths(root=tmp_path, experiment_id=plan.experiment_id)
-    settings = ExecutionSettings.load(CONFIG / "execution_engineering_dual_gpu_v1.yaml")
+    settings = ExecutionSettings.load(dual_endpoint_settings(tmp_path))
     pool = PooledLiveFactory(settings, plan.jobs, paths.manifest_dir, transport=transport)
     batch = ExperimentRunner(plan=plan, registry=registry, conditions=fixture.conditions(),
         workflow=fixture.workflow(), models=models, client_factory=pool, paths=paths).run()
     assert len(batch.completed) == len(plan.jobs) == 2
     assert {role for role, _, _ in seen} == {"manager", "compliance"}
-    assert all(cap == 16384 and timeout == 360.0 for _, cap, timeout in seen)
+    assert all(cap == 32768 and timeout == 360.0 for _, cap, timeout in seen)
     for job in plan.jobs:
         raw = read_raw_run(paths.run_dir(job.run_id))
         assert {call.role for call in raw.model_calls} == {"manager", "compliance"}
-        assert all(call.params.max_output_tokens == 16384 for call in raw.model_calls)
+        assert all(call.params.max_output_tokens == 32768 for call in raw.model_calls)

@@ -205,8 +205,10 @@ def test_a_transport_failure_is_still_a_transport_failure():
     client = OpenAICompatibleClient(
         base_url=BASE_URL, api_key=DUMMY_KEY, transport=transport
     )
-    with pytest.raises(ModelClientError, match="endpoint refused"):
+    with pytest.raises(ModelClientError, match="model stream failed: ModelClientError") as caught:
         call_structured(client, _request(), ManagerOutput, repair=_repair_spec())
+    assert isinstance(caught.value.__cause__, ModelClientError)
+    assert str(caught.value.__cause__) == "endpoint refused"
 
 
 def _repair_spec():

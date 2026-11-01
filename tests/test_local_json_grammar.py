@@ -4,7 +4,7 @@ from pilot01.model.openai_compat import OpenAICompatibleClient
 from pilot01.model.client import ModelClientError,ModelParams,ModelRequest,ModelMessage
 
 def payload(**kwargs):
-    client=OpenAICompatibleClient(base_url='http://offline.invalid/v1',api_key='offline-placeholder',**kwargs)
+    client=OpenAICompatibleClient(base_url='http://offline.invalid/v1',api_key='offline-placeholder',transport=lambda *args: (_ for _ in ()).throw(AssertionError('network forbidden')),**kwargs)
     request=ModelRequest(messages=(ModelMessage(role='user',content='unchanged task'),),params=ModelParams(provider='openai-compatible',model_id='Qwen3.8-27B',temperature=0,max_output_tokens=32768,reasoning_effort='xhigh',timeout_seconds=360),role='manager',prompt_version='test',invocation=0,run_id='offline')
     return json.loads(client.build_request(request).data)
 

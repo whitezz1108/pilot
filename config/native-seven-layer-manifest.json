@@ -1,0 +1,73 @@
+{
+  "bundle_version": "native-seven-layer-20261101-v1",
+  "bundles": {
+    "historical-reproduction": {
+      "experiment": {
+        "path": "config/experiment_native_tools_v1.yaml",
+        "sha256": "c6be6c90d04feae3cbba7e04fb974017d0d7b9ec2619b69749618426100a01a8"
+      },
+      "conditions": {
+        "path": "config/conditions_v3.yaml",
+        "sha256": "f7a0d214e0d36cf7c3033eeb72c48a5d71878fc20eb273f9fb516c56b7e74e4a"
+      },
+      "runtime": {
+        "path": "config/runtime_native_tools_v1.yaml",
+        "sha256": "62aa6533aa139990da3e2b107257cf94eba0cfb3fe5f49f9b01a66543ee60a33"
+      },
+      "workflow": {
+        "path": "config/workflow_v1.yaml",
+        "sha256": "0744e3dee529c15ea9356b7184c11ea17e8c108f80a8451a8e5cb1e79cba7140"
+      },
+      "policy": {
+        "path": "config/policies/policy_v2.yaml",
+        "sha256": "55f0239717b6fa4f3a2e90cd2e2120add0a74c40765cb144b39175f99ad83dc3"
+      },
+      "execution": {
+        "path": "config/execution_native_tools_v1.yaml",
+        "sha256": "3e981eae64552affeeb523fa5b8afdb16bb36eb1a25ced00831e04329f90139e"
+      },
+      "models": {
+        "path": "config/models_bf16_mtp_xhigh_native_v1.yaml",
+        "sha256": "bddd83d293e130d8c11045ce9ef247115d165b63b09aeeafb1223328ddcd75bc"
+      }
+    },
+    "recommended-primary": {
+      "experiment": {
+        "path": "config/experiment_recommended_primary_v1.yaml",
+        "sha256": "70913e8a61e66599914e0fd2d672dc06426aaf2b539ef9ee563af5c15c3219d0"
+      },
+      "conditions": {
+        "path": "config/conditions_v3.yaml",
+        "sha256": "f7a0d214e0d36cf7c3033eeb72c48a5d71878fc20eb273f9fb516c56b7e74e4a"
+      },
+      "runtime": {
+        "path": "config/runtime_native_tools_v1.yaml",
+        "sha256": "62aa6533aa139990da3e2b107257cf94eba0cfb3fe5f49f9b01a66543ee60a33"
+      },
+      "workflow": {
+        "path": "config/workflow_v1.yaml",
+        "sha256": "0744e3dee529c15ea9356b7184c11ea17e8c108f80a8451a8e5cb1e79cba7140"
+      },
+      "policy": {
+        "path": "config/policies/policy_v2.yaml",
+        "sha256": "55f0239717b6fa4f3a2e90cd2e2120add0a74c40765cb144b39175f99ad83dc3"
+      },
+      "execution": {
+        "path": "config/execution_native_tools_v1.yaml",
+        "sha256": "3e981eae64552affeeb523fa5b8afdb16bb36eb1a25ced00831e04329f90139e"
+      },
+      "models": {
+        "path": "config/models_recommended_primary_v1.yaml",
+        "sha256": "ab8f0a9955ad67ac9f85998d73f6c8b3136f3273db631d82e62e075787ea1a5d"
+      }
+    }
+  },
+  "deployment": {
+    "path": "deploy/native/launch.sh",
+    "sha256": "0a0f52b3afbaa38b5a8ee66261d3eca2d0b1c75bb19ea2d3b7fc260e67475655"
+  },
+  "verifier": {
+    "path": "deploy/native/verify.py",
+    "sha256": "91c888a1858634e63a286dd1e35d68fcb3f483beda0fafe0f33d9c278d4e1180"
+  }
+}

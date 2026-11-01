@@ -1,0 +1,21 @@
+# Frozen prompt bytes are part of historical experiment identity.
+prompts/manager_v1.md -text
+prompts/compliance_v1.md -text
+prompts/repair_v1.md -text
+prompts/compliance_v2.md -text
+prompts/repair_v2.md -text
+prompts/manager_v2.md -text
+# Bundle hashes are byte-exact on Linux and Windows.
+config/experiment_native_tools_v1.yaml -text
+config/conditions_v3.yaml -text
+config/runtime_native_tools_v1.yaml -text
+config/workflow_v1.yaml -text
+config/policies/policy_v2.yaml -text
+config/execution_native_tools_v1.yaml -text
+config/models_bf16_mtp_xhigh_native_v1.yaml -text
+config/experiment_recommended_primary_v1.yaml -text
+config/models_recommended_primary_v1.yaml -text
+deploy/native/launch.sh -text
+deploy/native/verify.py -text
+config/native-seven-layer-manifest.json -text
+config/native-seven-layer-manifest.sha256 -text

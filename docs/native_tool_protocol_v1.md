@@ -5,17 +5,23 @@ treatments share the same provider-neutral decision types and source tools.
 
 ## Decision contract
 
-Every model turn resolves to exactly one of:
+Every model turn resolves to one of:
 
-- `ToolCallDecision(call_id, name, arguments)` from the provider's structured
-  tool-call channel; or
+- `ToolCallDecision(calls)` containing one or more structured calls; or
 - `FinalSubmissionDecision(text)` from normal assistant content.
 
-Normal content and a tool call in the same turn, multiple calls in one turn, or
-the retired `{"tool_request": ...}` text envelope in native mode are protocol
-violations. They are recorded and terminate the run without format repair.
-The same applies when the provider reports `finish_reason=tool_calls` without a
-structured call, or reuses a call ID inside one node invocation.
+Multiple calls in one response are supported and executed sequentially in provider
+order. Each call consumes one unit of the node's tool budget. If the whole batch
+would exceed the remaining budget, none of that batch is executed. At zero
+remaining budget the next turn is final-only and carries no tool definitions.
+
+Normal content mixed with calls, the retired `{"tool_request": ...}` text
+envelope in native mode, `finish_reason=tool_calls` without a structured call,
+and duplicate call IDs within a node are protocol violations. They terminate
+the run without format repair. When a provider omits a call ID, the adapter
+creates a deterministic correlation ID and records `adapter_generated` as its
+origin; it does not repair tool names or arguments. Final answer schema repair
+is a separate structured-output path.
 
 ## Tool results
 

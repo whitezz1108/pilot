@@ -8,7 +8,7 @@ from test_tool_loop import build_request
 def rendered(outcome):
     text=render_tool_result(outcome)
     # Exercise the message/JSON transport boundary rather than just the backend.
-    client=OpenAICompatibleClient(base_url='http://offline.invalid/v1',api_key='offline-placeholder')
+    client=OpenAICompatibleClient(base_url='http://offline.invalid/v1',api_key='offline-placeholder',transport=lambda *args: (_ for _ in ()).throw(AssertionError('network forbidden')))
     request=build_request((ModelMessage(role='user',content=text),))
     wire=json.loads(client.build_request(request).data)
     return text,json.loads(wire['messages'][0]['content'].split('\n',3)[3])
