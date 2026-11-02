@@ -104,6 +104,8 @@ class ModelCallRecord(BaseModel):
 
     rendered_input: str
     """Every message sent, in order, exactly as sent."""
+    native_output_format: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    final_output_schema: dict | None = Field(default=None, exclude_if=lambda v: v is None)
 
     attempt: int = Field(ge=0, description="0 for the original call, 1 for the repair.")
     is_repair: bool = False
@@ -120,10 +122,9 @@ class ModelCallRecord(BaseModel):
     visible_response_characters: int | None = Field(default=None, exclude_if=lambda v: v is None)
     """Why the provider stopped, when it reports it.
 
-    ``"length"`` records that this call was cut off at ``max_output_tokens``.
-    Without it an empty or half-written response reads as a model that ignored
-    the schema, and the two need different fixes: one is a bigger budget, the
-    other is a better prompt. Gate 4 hit exactly that ambiguity.
+    ``"length"`` records truncation at a provider-enforced limit. Compare the
+    requested maximum, actual usage and serving capacity before attributing it
+    to the client budget. It does not by itself establish a schema violation.
     """
 
     raw_response: str | None = None

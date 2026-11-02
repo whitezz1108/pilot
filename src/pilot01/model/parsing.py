@@ -42,6 +42,7 @@ from .client import (
     ModelMessage,
     ModelOutputError,
     ModelRequest,
+    prepare_model_request,
 )
 from .log import ModelCallLog, ModelCallRecord
 
@@ -230,6 +231,8 @@ def record_call(
         prompt_version=prompt_version,
         params=request.params,
         rendered_input=request.rendered_input(),
+        native_output_format=request.native_output_format,
+        final_output_schema=request.final_output_schema,
         attempt=attempt,
         is_repair=is_repair,
         repair_reason=repair_reason,
@@ -264,6 +267,7 @@ def call_structured(
     expected_role: str | None = None,
     first_index: int = 0,
     first_response: Any = None,
+    repair_max_output_tokens: int | None = None,
 ) -> StructuredCallResult:
     """Make one structured model call, repairing the format at most once.
 
@@ -290,6 +294,7 @@ def call_structured(
     # -- attempt 0: the call itself ---------------------------------------
     if first_response is None:
         try:
+            request = prepare_model_request(client, request)
             response = client.generate(request)
         except ModelClientError as exc:
             emit(
@@ -359,15 +364,22 @@ def call_structured(
 
     # -- attempt 1: format repair, and nothing else ------------------------
     repair_version = f"{request.prompt_version}+{repair.prompt_version}"
+    repair_params = request.params
+    if repair_max_output_tokens is not None and repair_params.max_output_tokens > repair_max_output_tokens:
+        repair_params = repair_params.model_copy(
+            update={"max_output_tokens": repair_max_output_tokens})
     repair_request = ModelRequest(
         messages=repair.build_messages(response.text, first_error),
-        params=request.params,
+        native_output_format=request.native_output_format,
+        final_output_schema=request.final_output_schema,
+        params=repair_params,
         role=request.role,
         prompt_version=repair_version,
         invocation=request.invocation,
         run_id=request.run_id,
     )
     try:
+        repair_request = prepare_model_request(client, repair_request)
         repaired = client.generate(repair_request)
     except ModelClientError as exc:
         emit(

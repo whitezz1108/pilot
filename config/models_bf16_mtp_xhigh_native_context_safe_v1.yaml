@@ -1,0 +1,27 @@
+# Context-safe successor to the frozen 32768-token native profile.
+models_version: bf16-mtp-xhigh-native-context-safe-20261101
+roles:
+  manager:
+    provider: openai-compatible
+    model_id: Qwen3.8-27B
+    temperature: 1.0
+    max_output_tokens: 16384
+    top_p: 0.95
+    top_k: 20
+    min_p: 0.0
+    presence_penalty: 0.0
+    repetition_penalty: 1.0
+    timeout_seconds: 360.0
+    reasoning_effort: xhigh
+  compliance:
+    provider: openai-compatible
+    model_id: Qwen3.8-27B
+    temperature: 1.0
+    max_output_tokens: 16384
+    top_p: 0.95
+    top_k: 20
+    min_p: 0.0
+    presence_penalty: 0.0
+    repetition_penalty: 1.0
+    timeout_seconds: 360.0
+    reasoning_effort: xhigh

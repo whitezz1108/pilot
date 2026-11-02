@@ -279,6 +279,47 @@ def test_the_base_url_trailing_slash_does_not_double_up():
     assert client.build_request(request_for()).full_url == f"{BASE_URL}/chat/completions"
 
 
+def test_context_budget_lowers_the_requested_completion_before_transport(monkeypatch):
+    monkeypatch.setattr(
+        "pilot01.model.openai_compat.count_local_tokens",
+        lambda text, path: (16477, "a" * 64),
+    )
+    client = OpenAICompatibleClient(
+        base_url=BASE_URL,
+        api_key=DUMMY_KEY,
+        reasoning_tokenizer_path="frozen-tokenizer.json",
+        context_window_tokens=49152,
+        context_safety_tokens=1024,
+        minimum_output_tokens=2048,
+    )
+    prepared = client.prepare_request(
+        request_for(params=params(max_output_tokens=32768))
+    )
+    assert prepared.params.max_output_tokens == 31651
+    payload = json.loads(client.build_request(prepared).data.decode("utf-8"))
+    assert payload["max_tokens"] == 31651
+
+
+def test_context_budget_failure_is_local_and_never_calls_transport(monkeypatch):
+    monkeypatch.setattr(
+        "pilot01.model.openai_compat.count_local_tokens",
+        lambda text, path: (47000, "b" * 64),
+    )
+    called = []
+    client = OpenAICompatibleClient(
+        base_url=BASE_URL,
+        api_key=DUMMY_KEY,
+        transport=lambda *_: called.append(True),
+        reasoning_tokenizer_path="frozen-tokenizer.json",
+        context_window_tokens=49152,
+        context_safety_tokens=1024,
+        minimum_output_tokens=2048,
+    )
+    with pytest.raises(ModelClientError, match="context_budget_failure"):
+        client.generate(request_for(params=params(max_output_tokens=16384)))
+    assert called == []
+
+
 # --------------------------------------------------------------------------
 # OpenAICompatibleClient: response decoding (injected transport)
 # --------------------------------------------------------------------------

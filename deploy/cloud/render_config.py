@@ -64,6 +64,8 @@ WorkingDirectory={root}
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONPATH={root}/src
+Environment=PILOT01_GPU_MONITOR_MODE=local
+Environment=PILOT01_EXECUTION_BACKEND=local-gpu
 ExecStart={root}/.venv/bin/python -m pilot01.experiment.console --port 8766
 Restart=on-failure
 RestartSec=5

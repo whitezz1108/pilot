@@ -33,8 +33,17 @@ from .runspec import RunPlan, build_run_plan, write_run_plan_csv
 from .scoring_v2 import write_report
 from .records import Records, MAX_UPLOAD, MAX_ZIP_UPLOAD
 from .design import ExperimentDesign, COHORT_NAMES
+from .gpu_monitor import GpuMonitor
 
 ROOT = Path(__file__).resolve().parents[3]
+
+LOCAL_GPU_ENDPOINTS = (
+    dict(gpu_index=0, slot=1, base_url="http://127.0.0.1:30000/v1", port=30000),
+    dict(gpu_index=1, slot=2, base_url="http://127.0.0.1:30001/v1", port=30001),
+    dict(gpu_index=2, slot=3, base_url="http://127.0.0.1:30002/v1", port=30002),
+)
+LOCAL_GPU_MAX_IN_FLIGHT = 4
+LOCAL_REASONING_TOKENIZER = "/home/evan/ai/models/Qwen3.8-27B/tokenizer.json"
 
 
 def now():
@@ -118,14 +127,71 @@ def local_credentials(path):
     return status
 
 
+def local_gpu_credentials():
+    """Install the three loopback-only SGLang endpoints without exposing secrets."""
+    status = []
+    for endpoint in LOCAL_GPU_ENDPOINTS:
+        slot = endpoint["slot"]
+        suffix = "" if slot == 1 else f"_{slot}"
+        key_name, url_name = f"PILOT01_API_KEY{suffix}", f"PILOT01_BASE_URL{suffix}"
+        # The local SGLang services accept an arbitrary bearer value. It is kept
+        # process-local and is never returned to the browser or written to a run.
+        os.environ[url_name] = endpoint["base_url"]
+        os.environ[key_name] = "local-loopback"
+        status.append(dict(**endpoint, ready=True, host="127.0.0.1",
+                           key_present=True, key_id="local-only",
+                           max_in_flight=LOCAL_GPU_MAX_IN_FLIGHT))
+    return status
+
+
+class ObservedClient:
+    """Add console activity telemetry without changing the provider contract."""
+
+    def __init__(self, inner, activity, role, job):
+        self.inner = inner
+        self.activity = activity
+        self.role = role
+        self.job = job
+
+    @property
+    def tool_transport(self):
+        # Native-v2 validates this capability before the first model request.
+        # The observer must remain transparent to that protocol negotiation.
+        return getattr(self.inner, "tool_transport", "legacy-text")
+
+    def prepare_request(self, request):
+        prepare = getattr(self.inner, "prepare_request", None)
+        return request if prepare is None else prepare(request)
+
+    def estimate_request_tokens(self, request):
+        estimate = getattr(self.inner, "estimate_request_tokens", None)
+        if estimate is None:
+            raise ModelClientError("observed model client has no local token estimator")
+        return estimate(request)
+
+    def generate(self, request):
+        self.activity(self.job, self.role, "requesting")
+        try:
+            return self.inner.generate(request)
+        finally:
+            self.activity(self.job, self.role, "returned")
+
+
 class Console:
     def __init__(self, root=ROOT, *, registry=None, profile=None, case_ids=None,
-                 factory_builder=None, credential_loader=None):
+                 factory_builder=None, credential_loader=None, gpu_monitor=None,
+                 execution_backend=None):
         self.root = Path(root)
         self.output = self.root / "outputs/experiment_console"
         self.output.mkdir(parents=True, exist_ok=True)
+        self.execution_backend = execution_backend or os.environ.get(
+            "PILOT01_EXECUTION_BACKEND", "local-gpu" if credential_loader is None else "api")
+        if self.execution_backend not in ("local-gpu", "api"):
+            raise ValueError("PILOT01_EXECUTION_BACKEND must be local-gpu or api")
         self.registry = registry or verify_ready_registry(self.root / "data/pilot01/clean80_v1/case_registry_v2.json")
-        self.profile = profile or ExperimentProfile(self.root / "config/experiment_v3.yaml")
+        default_profile = ("experiment_native_tools_closed_v4.yaml" if self.execution_backend == "local-gpu"
+                           else "experiment_v3.yaml")
+        self.profile = profile or ExperimentProfile(self.root / "config" / default_profile)
         self.loaded_fingerprint = self.profile.fingerprint()
         cohorts = read_json(self.root / "data/pilot01/clean80_v1/researcher_cohorts.json", [])
         if case_ids is None:
@@ -135,7 +201,9 @@ class Console:
         self.factorial = self.profile.conditions.conditions_version == "3"
         self.draft_selection = None
         self.factory_builder = factory_builder or PooledLiveFactory
-        self.credential_loader = credential_loader or (lambda: local_credentials(self.root / "config/api.local.env"))
+        self.credential_loader = credential_loader or (
+            local_gpu_credentials if self.execution_backend == "local-gpu"
+            else lambda: local_credentials(self.root / "config/api.local.env"))
         self.lock = threading.RLock()
         self.token = secrets.token_urlsafe(32)
         self.thread = None
@@ -151,6 +219,7 @@ class Console:
         self.state_epoch = uuid4().hex
         self.state_serial = 0
         self.configured_slots = self.credential_loader()
+        self.gpu_monitor = gpu_monitor or GpuMonitor()
         self.redaction_keys = {v for k, v in os.environ.items() if k.startswith("PILOT01_API_KEY") and v}
         self.records = Records(self.output, self.registry, redact=self.redact,
             active_experiment=lambda: self.session["experiment_id"] if self.session and self.busy() else None)
@@ -158,6 +227,10 @@ class Console:
 
     def busy(self):
         return self.thread is not None and self.thread.is_alive()
+
+    def gpu_status(self, force=False):
+        """Read-only hardware status; collecting it never starts a model request."""
+        return self.gpu_monitor.collect(force=force)
 
     def _recover_latest(self):
         files = list(self.output.glob("manifests/*/console_session.json"))
@@ -186,11 +259,24 @@ class Console:
         with self.lock:
             if not self.busy():
                 self.configured_slots = self.credential_loader()
-            return dict(apis=self.configured_slots, dataset="全部80份 · 自定义因子实验" if self.factorial else "D条件开发预试",
-                        contracts=len(self.case_ids), model=self.profile.models.for_role("manager").model_id,
+            model = self.profile.models.for_role("manager")
+            model_parameters = model.model_dump(mode="json")
+            return dict(apis=self.configured_slots, execution_backend=self.execution_backend,
+                        dataset="全部80份 · 自定义因子实验" if self.factorial else "D条件开发预试",
+                        contracts=len(self.case_ids), model=model.model_id,
+                        model_parameters=model_parameters,
+                        runtime_parameters=self.profile.runtime.model_dump(mode="json"),
                         tool_limit=self.profile.runtime.max_tool_requests_per_node,
-                        output_limit=self.profile.models.for_role("manager").max_output_tokens,
-                        default_count=64, default_concurrency=16, max_concurrency=128,
+                        output_limit=model.max_output_tokens,
+                        default_count=64,
+                        default_concurrency=4 if self.execution_backend == "local-gpu" else 16,
+                        max_concurrency=12 if self.execution_backend == "local-gpu" else 128,
+                        gpu_max_in_flight=LOCAL_GPU_MAX_IN_FLIGHT,
+                        role_gpu_defaults=dict(manager=[0], compliance=[1]),
+                        server_parameters=dict(power_limit_w=200, context_length=49152,
+                            precision="BF16", speculative="NEXTN/MTP", max_running_requests=4,
+                            reasoning_parser="qwen3", tool_call_parser="qwen3_coder",
+                            context_safety_tokens=1024, minimum_output_tokens=2048),
                         factorial=self.factorial, profile_version=self.profile.version,
                         cohorts=[dict(id=key, label=label, contracts=len(self.design.cases(key)),
                                       memos=sum(len(self.registry.get(cid).error_conditions) for cid in self.design.cases(key)))
@@ -202,6 +288,8 @@ class Console:
     def save_apis(self, data):
         """Atomically replace user-entered endpoints; a blank key keeps its value."""
         with self.lock:
+            if self.execution_backend == "local-gpu":
+                raise ValueError("本地GPU端点由服务器启动配置固定，不能在网页中改写")
             if self.busy():
                 raise ValueError("批次正在运行，结束后才能修改API配置")
             if set(data) != {"apis"} or not isinstance(data["apis"], list) or len(data["apis"]) != 2:
@@ -249,7 +337,7 @@ class Console:
             return dict(apis=self.configured_slots, message="API配置已保存；新批次使用新配置，Key留空保留原值")
 
     def api_snapshot(self, slots):
-        return [{k: s.get(k) for k in ("slot", "host", "base_url", "key_id")}
+        return [{k: s.get(k) for k in ("slot", "gpu_index", "host", "base_url", "key_id", "max_in_flight")}
                 for s in sorted(self.configured_slots, key=lambda s: s["slot"]) if s["slot"] in slots]
 
     def materials(self, cohort="all80"):
@@ -300,25 +388,53 @@ class Console:
                 raise ValueError("已有一个批次正在运行")
             if not self.draft or data.get("draft_id") != self.draft.experiment_id:
                 raise ValueError("清单已过期，请重新生成运行清单")
+            if self.session and self.session.get("experiment_id") == self.draft.experiment_id:
+                raise ValueError("这份清单已经启动过，不能用“开始”覆盖原尝试；请继续未完成项或新建一轮")
             selected = data.get("run_ids", [])
             if not isinstance(selected, list) or not selected or not all(isinstance(r, str) for r in selected):
                 raise ValueError("请至少选择一个run")
             if len(set(selected)) != len(selected) or not set(selected) <= set(self.draft.run_ids):
                 raise ValueError("选择的run不属于当前清单")
-            concurrency = data.get("concurrency", 64)
-            if type(concurrency) is not int or not 1 <= concurrency <= 128:
-                raise ValueError("并发数必须为1到128的整数")
-            slots = data.get("slots", [])
             self.configured_slots = self.credential_loader()
             ready = {s["slot"] for s in self.configured_slots if s["ready"]}
-            if not slots or any(type(s) is not int for s in slots) or len(set(slots)) != len(slots) or not set(slots) <= ready:
-                raise ValueError("所选API尚未配置完整，请填写config/api.local.env或只选已就绪的API")
+            concurrency = data.get("concurrency", 4 if self.execution_backend == "local-gpu" else 64)
+            maximum = 12 if self.execution_backend == "local-gpu" else 128
+            if type(concurrency) is not int or not 1 <= concurrency <= maximum:
+                raise ValueError(f"并发数必须为1到{maximum}的整数")
+            role_gpus = None
+            if self.execution_backend == "local-gpu":
+                role_gpus = {}
+                gpu_to_slot = {s["gpu_index"]: s["slot"] for s in self.configured_slots if s["ready"]}
+                for role in ("manager", "compliance"):
+                    gpus = data.get(f"{role}_gpus", [])
+                    if (not isinstance(gpus, list) or not gpus
+                            or any(type(gpu) is not int for gpu in gpus)
+                            or len(set(gpus)) != len(gpus) or not set(gpus) <= set(gpu_to_slot)):
+                        raise ValueError(f"{role}必须至少选择一个已就绪的GPU，且不能重复")
+                    role_gpus[role] = list(gpus)
+                role_slot_pools = {role: tuple(gpu_to_slot[gpu] for gpu in gpus)
+                                   for role, gpus in role_gpus.items()}
+                slots = sorted(set(role_slot_pools["manager"]) | set(role_slot_pools["compliance"]))
+                tokenizer = os.environ.get("PILOT01_REASONING_TOKENIZER_PATH", LOCAL_REASONING_TOKENIZER)
+                settings = ExecutionSettings(max_parallel_runs=concurrency, http_retries=0,
+                    recovery_successes=20, endpoints=[dict(slot=slot,
+                        max_in_flight=LOCAL_GPU_MAX_IN_FLIGHT, reasoning_stream=True,
+                        reasoning_tokenizer_path=tokenizer, tool_transport="native",
+                        context_window_tokens=49152, context_safety_tokens=1024,
+                        capacity_preflight="sglang-v1",
+                        minimum_output_tokens=2048) for slot in slots],
+                    role_slot_pools=role_slot_pools)
+            else:
+                slots = data.get("slots", [])
+                if (not slots or any(type(s) is not int for s in slots)
+                        or len(set(slots)) != len(slots) or not set(slots) <= ready):
+                    raise ValueError("所选API尚未配置完整，请填写config/api.local.env或只选已就绪的API")
+                # Legacy API mode preserves the historical shared-account
+                # quota and two-attempt transient HTTP recovery behavior.
+                settings = ExecutionSettings(max_parallel_runs=concurrency, http_retries=2,
+                    recovery_successes=20, endpoints=[dict(slot=s, max_in_flight=concurrency,
+                        quota_group="shared-account") for s in slots])
             api_snapshot = self.api_snapshot(slots)
-            # Both keys conservatively share one account quota. Every launch has
-            # its own execution snapshot, leaving the global config untouched.
-            settings = ExecutionSettings(max_parallel_runs=concurrency, http_retries=2,
-                recovery_successes=20, endpoints=[dict(slot=s, max_in_flight=concurrency,
-                    quota_group="shared-account") for s in slots])
             plan = self.draft
             paths = self._paths(plan.experiment_id).ensure()
             plan.check(self.profile.conditions, self.registry)
@@ -328,14 +444,20 @@ class Console:
             write_run_plan_csv(plan, paths.run_plan_csv)
             config_path = paths.manifest_dir / "console_execution.yaml"
             config_path.write_text(yaml.safe_dump(settings.model_dump(mode="json")), encoding="utf-8")
-            pool = self.factory_builder(settings, plan.jobs, paths.manifest_dir)
+            selected_set = set(selected)
+            selected_jobs = [job for job in plan.jobs if job.run_id in selected_set]
+            pool = self.factory_builder(settings, selected_jobs, paths.manifest_dir)
             pool.write_manifest(config_path, plan)
-            selected = [j.run_id for j in plan.jobs if j.run_id in set(selected)]
+            selected = [job.run_id for job in selected_jobs]
             write_json(paths.manifest_dir / "launch_selection.json", dict(
                 purpose="User-configured A/V/E/D factorial experiment" if self.factorial else "D-only development preflight",
                 factor_selection=self.draft_selection,
                 full_plan_count=len(plan.jobs), selected_count=len(selected), run_ids=selected,
                 api_configuration=api_snapshot,
+                execution_backend=self.execution_backend,
+                role_gpus=role_gpus,
+                model_parameters=self.profile.models.for_role("manager").model_dump(mode="json"),
+                runtime_parameters=self.profile.runtime.model_dump(mode="json"),
                 initiated_by=initiated_by,
                 identity_source="gateway_header" if initiated_by else "not_recorded",
                 selection="manual selection from fixed-seed full plan; may be an incomplete treatment grid",
@@ -345,13 +467,17 @@ class Console:
             self.session = dict(experiment_id=plan.experiment_id, status="running", run_ids=selected,
                 created_at=now(), finished_at=None, selected_count=len(selected), full_plan_count=len(plan.jobs),
                 concurrency=concurrency, slots=slots, api_configuration=api_snapshot, error=None, output_path=str(paths.root),
+                execution_backend=self.execution_backend, manager_gpus=(role_gpus or {}).get("manager"),
+                compliance_gpus=(role_gpus or {}).get("compliance"),
                 conditions=list(plan.condition_ids), repeat=plan.repeat_count,
                 factor_selection=self.draft_selection,
                 initiated_by=initiated_by,
                 identity_source="gateway_header" if initiated_by else "not_recorded",
                 message="参数已冻结；未选中的计划项不计为运行失败，任意选取不保证完整配对。")
             self._launch(resume=False)
-            return dict(experiment_id=plan.experiment_id, selected=len(selected), concurrency=concurrency)
+            return dict(experiment_id=plan.experiment_id, selected=len(selected), concurrency=concurrency,
+                        manager_gpus=(role_gpus or {}).get("manager"),
+                        compliance_gpus=(role_gpus or {}).get("compliance"))
 
     def _launch(self, resume):
         self.stop_event.clear()
@@ -366,8 +492,19 @@ class Console:
     def _activity(self, job, role, phase):
         with self.lock:
             previous = self.activity.get(job.run_id, {})
+            timestamp = now()
+            previous_role = previous.get("role")
+            role_changed = bool(previous_role and previous_role != role)
+            handoff_at = previous.get("handoff_at")
+            if previous_role == "manager" and role == "compliance":
+                handoff_at = timestamp
             record = dict(run_id=job.run_id, role=role, phase=phase,
-                          first_started_at=previous.get("first_started_at", now()), updated_at=now())
+                          first_started_at=previous.get("first_started_at", timestamp),
+                          role_started_at=(timestamp if role_changed
+                                           else previous.get("role_started_at", timestamp)),
+                          previous_role=(previous_role if role_changed
+                                         else previous.get("previous_role")),
+                          handoff_at=handoff_at, updated_at=timestamp)
             self.activity[job.run_id] = record
             with (self._paths().manifest_dir / "console_activity.jsonl").open("a", encoding="utf-8") as f:
                 f.write(json.dumps(record) + "\n")
@@ -375,17 +512,8 @@ class Console:
     def _execute(self, resume):
         outer = self
         pool = self.pool
-        class ObservedClient:
-            def __init__(self, inner, role, job):
-                self.inner, self.role, self.job = inner, role, job
-            def generate(self, request):
-                outer._activity(self.job, self.role, "requesting")
-                try:
-                    return self.inner.generate(request)
-                finally:
-                    outer._activity(self.job, self.role, "returned")
         def factory(*, role, job):
-            return ObservedClient(pool(role=role, job=job), role, job)
+            return ObservedClient(pool(role=role, job=job), outer._activity, role, job)
         paths = self._paths()
         try:
             runner = ExperimentRunner(plan=self.plan, registry=self.registry,
@@ -448,7 +576,9 @@ class Console:
             paths = self._paths()
             config_path = paths.manifest_dir / "console_execution.yaml"
             settings = ExecutionSettings.load(config_path)
-            self.pool = self.factory_builder(settings, self.plan.jobs, paths.manifest_dir)
+            selected = set(self.session["run_ids"])
+            jobs = [job for job in self.plan.jobs if job.run_id in selected]
+            self.pool = self.factory_builder(settings, jobs, paths.manifest_dir)
             self.pool.write_manifest(config_path, self.plan)
             self._launch(resume=True)
             return dict(message="继续未完成项；已完成及已记录失败的run不会重跑。")
@@ -516,11 +646,18 @@ class Console:
                 if start:
                     end = end or (now() if self.busy() else self.session.get("finished_at") or activity.get("updated_at") or start)
                     elapsed = max(0, (datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds())
-                row.update(status=status, node=activity.get("role"), elapsed=elapsed,
+                role_route = self.pool.role_routing.get(job.run_id, {}) if self.pool and getattr(self.pool, "role_routing", None) else {}
+                shared_slot = self.pool.routing.get(job.run_id) if self.pool and getattr(self.pool, "routing", None) else None
+                row.update(status=status, node=activity.get("role"), phase=activity.get("phase"),
+                    activity_updated_at=activity.get("updated_at"),
+                    role_started_at=activity.get("role_started_at"),
+                    previous_node=activity.get("previous_role"),
+                    handoff_at=activity.get("handoff_at"), elapsed=elapsed,
                     calls=summary.get("calls", 0), tools=summary.get("tools", 0), tokens=summary.get("tokens") or 0,
                     missing_usage=summary.get("missing_usage", 0), action=summary.get("action"),
                     manager_action=summary.get("manager_action"),
-                    error=summary.get("error") or "", slot=self.pool.routing[job.run_id] if self.pool else None)
+                    error=summary.get("error") or "", slot=shared_slot,
+                    manager_slot=role_route.get("manager"), compliance_slot=role_route.get("compliance"))
                 for role in ("manager", "compliance"):
                     row[role + "_validation_pass"] = summary.get(role + "_validation_pass")
                     row[role + "_audit_failures"] = summary.get(role + "_audit_failures", [])
@@ -540,6 +677,7 @@ class Console:
             pending = counts["waiting"] + counts["interrupted"] + counts["running"]
             if not self.busy() and not pending and session["status"] in ("stopped", "interrupted"):
                 session["status"] = "finished"
+            profile_unchanged = self.plan.profile_fingerprint == self.loaded_fingerprint
             snapshot = {r["run_id"]: r for r in rows}
             latest = next(reversed(self.state_versions.values()), None) if self.state_versions else None
             if latest != snapshot:
@@ -553,7 +691,10 @@ class Console:
             sent_rows = [r for rid, r in snapshot.items() if previous.get(rid) != r] if delta else rows
             return dict(session=session, rows=sent_rows, counters=dict(counts), delta=delta, version=version,
                 removed=[rid for rid in previous if rid not in snapshot] if delta else [],
-                can_resume=not self.busy() and pending > 0 and session["status"] in ("stopped", "interrupted", "error"),
+                can_resume=not self.busy() and pending > 0 and profile_unchanged
+                           and session["status"] in ("stopped", "interrupted", "error"),
+                resume_blocked_reason=("实现版本已更新；保留本轮记录并新建一轮"
+                    if pending > 0 and not profile_unchanged else None),
                 api_limits=api_limits, known_tokens=sum(r["tokens"] for r in rows),
                 **self._http_totals(paths.manifest_dir), busy=self.busy())
 
@@ -616,7 +757,19 @@ def make_handler(app):
                 if parsed.path == "/":
                     html = Path(__file__).with_name("console.html").read_text(encoding="utf-8")
                     return self.send(200, html.replace("__CSRF_TOKEN__", app.token).encode(), "text/html; charset=utf-8")
-                if parsed.path in ("/records", "/records.js", "/materials", "/materials.js"):
+                if parsed.path in ("/pixel-office.css", "/pixel-office.js",
+                                   "/assets/pixel-office-room.png", "/assets/pixel-office-room-v2.png"):
+                    if parsed.path == "/pixel-office.css":
+                        path, kind = Path(__file__).with_name("pixel-office.css"), "text/css; charset=utf-8"
+                    elif parsed.path == "/pixel-office.js":
+                        path, kind = Path(__file__).with_name("pixel-office.js"), "application/javascript; charset=utf-8"
+                    else:
+                        filename = ("pixel-office-room-v2.png" if parsed.path.endswith("-v2.png")
+                                    else "pixel-office-room.png")
+                        path = Path(__file__).with_name("assets") / filename
+                        kind = "image/png"
+                    return self.send(200, path.read_bytes(), kind)
+                if parsed.path in ("/office", "/records", "/records.js", "/materials", "/materials.js"):
                     filename = parsed.path.lstrip("/")
                     if not filename.endswith(".js"):
                         filename += ".html"
@@ -642,6 +795,10 @@ def make_handler(app):
                         return self.send_archive(ident)
                 if parsed.path == "/api/health":
                     return self.send(200, dict(app="pilot01-console", ready=True))
+                if parsed.path == "/api/gpu-status":
+                    args = parse_qs(parsed.query)
+                    payload = app.gpu_status(force=args.get("force") == ["1"])
+                    return self.send(200 if payload.get("ok") else 503, payload)
                 if parsed.path == "/api/config":
                     return self.send(200, dict(app.config(), viewer_user=self.viewer()))
                 if parsed.path == "/api/materials":

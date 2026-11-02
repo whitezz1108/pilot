@@ -1,0 +1,7 @@
+# Successor to context-safe v1. Historical profiles and runs remain unchanged.
+experiment_version: "3"
+conditions: conditions_v3.yaml
+runtime: runtime_native_tools_context_compact_v2.yaml
+models: models_bf16_mtp_xhigh_native_context_safe_v1.yaml
+workflow: workflow_v1.yaml
+policy: policies/policy_v2.yaml

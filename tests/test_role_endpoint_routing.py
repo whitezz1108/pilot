@@ -89,6 +89,55 @@ def test_invalid_role_mapping_fails_before_client_construction(mapping):
             {"slot": 1, "max_in_flight": 1}, {"slot": 2, "max_in_flight": 1}])
 
 
+def test_role_endpoint_pools_balance_deterministically_and_pin_each_role(tmp_path, monkeypatch):
+    credentials(monkeypatch)
+    monkeypatch.setenv("PILOT01_BASE_URL_3", "https://third.example/v1")
+    monkeypatch.setenv("PILOT01_API_KEY_3", "unit-third-secret")
+    settings = ExecutionSettings(max_parallel_runs=6, http_retries=0,
+        endpoints=[
+            {"slot": 1, "max_in_flight": 4, "tool_transport": "native"},
+            {"slot": 2, "max_in_flight": 4, "tool_transport": "native"},
+            {"slot": 3, "max_in_flight": 4, "tool_transport": "native"},
+        ], role_slot_pools={"manager": (1, 2), "compliance": (2, 3)})
+    jobs = [SimpleNamespace(run_id=f"pool-{i}") for i in range(6)]
+    pool = PooledLiveFactory(settings, jobs, tmp_path,
+        transport=lambda *_: envelope('{"ok":true}'))
+    assert [pool.role_routing[j.run_id]["manager"] for j in jobs] == [1, 2, 1, 2, 1, 2]
+    assert [pool.role_routing[j.run_id]["compliance"] for j in jobs] == [2, 3, 2, 3, 2, 3]
+    assert pool.routing == {}
+    for job in jobs:
+        for role in ("manager", "compliance"):
+            clients = [pool(role=role, job=job) for _ in range(3)]
+            expected = pool.role_routing[job.run_id][role]
+            assert all(client.endpoint == pool.urls[expected] + "/chat/completions" for client in clients)
+            assert all(client.tool_transport == "native" for client in clients)
+
+    config_path = tmp_path / "pool.yaml"
+    config_path.write_text("test: true\n", encoding="utf-8")
+    pool.write_manifest(config_path, SimpleNamespace(fingerprint=lambda: "pool-plan"))
+    policy = json.loads((tmp_path / "execution_policy.json").read_text())
+    assert policy["run_role_slots"] == pool.role_routing
+
+
+@pytest.mark.parametrize("pools", [
+    {}, {"manager": (1,)},
+    {"manager": (), "compliance": (2,)},
+    {"manager": (1, 1), "compliance": (2,)},
+    {"manager": (1,), "compliance": (3,)},
+])
+def test_invalid_role_endpoint_pools_fail_before_client_construction(pools):
+    with pytest.raises(ValueError, match="role_slot_pools"):
+        ExecutionSettings(role_slot_pools=pools, endpoints=[
+            {"slot": 1, "max_in_flight": 1}, {"slot": 2, "max_in_flight": 1}])
+
+
+def test_fixed_slots_and_role_endpoint_pools_are_mutually_exclusive():
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        ExecutionSettings(role_slots={"manager": 1, "compliance": 2},
+            role_slot_pools={"manager": (1,), "compliance": (2,)}, endpoints=[
+                {"slot": 1, "max_in_flight": 1}, {"slot": 2, "max_in_flight": 1}])
+
+
 def test_legacy_execution_settings_omit_role_mapping():
     settings = ExecutionSettings.load(CONFIG / "execution_v1.yaml")
     assert "role_slots" not in settings.model_dump(mode="json")
@@ -127,6 +176,48 @@ def test_native_v2_profile_is_an_explicit_new_protocol_and_ranker():
     assert profile.runtime.tool_protocol == "native-v2"
     assert profile.runtime.search_ranker_version == "human-lexical-v2"
     assert profile.runtime.max_tool_requests_per_node == 16
+
+
+def test_context_safe_profile_freezes_separate_turn_budgets():
+    profile = ExperimentProfile(CONFIG / "experiment_native_tools_context_safe_v1.yaml")
+    assert profile.models.for_role("manager").max_output_tokens == 16384
+    assert profile.models.for_role("compliance").max_output_tokens == 16384
+    assert profile.runtime.tool_turn_max_output_tokens == 8192
+    assert profile.runtime.final_max_output_tokens == 16384
+    assert profile.runtime.repair_max_output_tokens == 4096
+
+
+def test_context_compact_profile_freezes_retrieval_ledger_policy():
+    profile = ExperimentProfile(CONFIG / "experiment_native_tools_context_compact_v2.yaml")
+    runtime = profile.runtime
+    assert runtime.context_compaction_version == "retrieval-ledger-v1"
+    assert runtime.context_compaction_trigger_tokens == 18000
+    assert runtime.context_compaction_target_tokens == 12000
+    assert runtime.search_disable_after_no_new == 3
+    assert runtime.reject_duplicate_searches is True
+
+
+def test_retrieval_bounded_profile_freezes_page_and_open_limits():
+    profile = ExperimentProfile(CONFIG / "experiment_native_tools_retrieval_bounded_v3.yaml")
+    runtime = profile.runtime
+    assert runtime.prompt_version == "v6"
+    assert runtime.max_search_pages_per_query == 2
+    assert runtime.reject_duplicate_opens is True
+    assert runtime.context_compaction_version == "retrieval-ledger-v1"
+    assert runtime.tool_turn_max_output_tokens == 16384
+
+
+def test_endpoint_context_budget_requires_a_local_tokenizer():
+    with pytest.raises(ValueError, match="requires reasoning_tokenizer_path"):
+        ExecutionSettings.model_validate({
+            "endpoints": [{
+                "slot": 1,
+                "max_in_flight": 1,
+                "context_window_tokens": 49152,
+                "context_safety_tokens": 1024,
+                "minimum_output_tokens": 2048,
+            }]
+        })
 
 
 @pytest.mark.parametrize("filename,temperature", [

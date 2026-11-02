@@ -1,0 +1,8 @@
+# New experiment entrypoint after the observed 49,245 > 49,152 context failure.
+# The older native-v2 profile remains frozen for historical interpretation.
+experiment_version: "3"
+conditions: conditions_v3.yaml
+runtime: runtime_native_tools_context_safe_v1.yaml
+models: models_bf16_mtp_xhigh_native_context_safe_v1.yaml
+workflow: workflow_v1.yaml
+policy: policies/policy_v2.yaml

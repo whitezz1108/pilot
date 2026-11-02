@@ -1,0 +1,77 @@
+schema_version: native-sweep-v1
+scope: engineering_probe_not_research_result
+
+workload:
+  request_count: 68
+  prompt_tokens: 481507
+  completion_tokens: 117593
+  reasoning_tokens: 100285
+  warmup_requests: 5
+  stream: true
+  required_payload_fields:
+    - model
+    - messages
+    - temperature
+    - top_p
+    - top_k
+    - min_p
+    - max_tokens
+    - seed
+
+server:
+  gpu: 2
+  host_port: 30002
+  container_port: 30000
+  image: sha256:e3a4f06001a29542fc4a8638536d9ffc5eb9c9942b08603c09b19a56eae4a1ae
+  model_host_path: /home/evan/ai/models/Qwen3.8-27B
+  model_container_path: /models/Qwen3.8-27B
+  served_model_name: Qwen3.8-27B
+  dtype: bfloat16
+  quantization: null
+  tensor_parallel_size: 1
+  context_length: 49152
+  mem_fraction_static: 0.8
+  reasoning_parser: qwen3
+  tool_call_parser: qwen3_coder
+  disable_radix_cache: true
+  speculative_algorithm: NEXTN
+  speculative_num_steps: 3
+  speculative_eagle_topk: 1
+  speculative_num_draft_tokens: 4
+  preferred_sampling_params:
+    max_new_tokens: 32768
+    temperature: 0.6
+    top_p: 0.95
+    top_k: 20
+    min_p: 0.0
+
+design:
+  smoke:
+    power_w: 200
+    concurrency: 2
+    requests: 8
+    repeats: 1
+  power:
+    concurrency: 2
+    powers_w: [230, 240, 250, 260]
+    repeat_orders:
+      - [230, 240, 250, 260]
+      - [260, 250, 240, 230]
+      - [240, 260, 230, 250]
+    repeats: 3
+    within_best_fraction: 0.03
+  concurrency:
+    levels: [2, 4, 8, 16]
+    safety_request_multiplier: 2
+    repeats: 3
+    minimum_next_gain_fraction: 0.10
+    material_p95_latency_growth_fraction: 0.25
+  interaction:
+    adjacent_power_delta_w: 10
+    repeats: 3
+    include_260_only_if_unstable: true
+  final_workflow_smoke:
+    runs: 16
+
+output_root: outputs/native-performance-sweep-20261101
+

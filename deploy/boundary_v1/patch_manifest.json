@@ -1,0 +1,12 @@
+{
+  "reasoning_parser.py": {
+    "destination": "parser/reasoning_parser.py",
+    "before_sha256": "55360b73acfaac21db2ff4644bfc38ff6d744eb4371b15581a2b08e84673dc5e",
+    "after_sha256": "a88890f3749c565b019b67f0723fcdd17ee261b9acf46bd7e97686c35353fccb"
+  },
+  "reasoner_grammar_backend.py": {
+    "destination": "constrained/reasoner_grammar_backend.py",
+    "before_sha256": "79cc54053900c58af280c6e7989052e4f993b81bcebe563c57fe84d975742cd2",
+    "after_sha256": "2b63ffd41350f3ba0a16e2ba9714affee4b9aa966a42ddeee304f464987da7e7"
+  }
+}

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .config import ConditionsConfig, ModelsConfig, load_models_v1, load_workflow_v1, load_policy_v2
 
@@ -19,6 +19,8 @@ class RuntimeConfig(BaseModel):
     page_size: int = Field(default=5, ge=1, le=20)
     excerpt_chars: int = Field(default=400, ge=80, le=2000)
     tool_protocol: Literal["2", "native-v1", "native-v2"] = "2"
+    native_output_format: Literal["closed-final-or-tool-v1"] | None = Field(
+        default=None, exclude_if=lambda v: v is None)
     # Frozen runs retain BM25 v1.  v2 adds deterministic phrase, coverage and
     # proximity signals without importing a learned or external retriever.
     search_ranker_version: Literal["bm25-v1", "human-lexical-v2"] = "bm25-v1"
@@ -26,9 +28,52 @@ class RuntimeConfig(BaseModel):
     # Omit the legacy default when serializing historical frozen plans.
     verification_mode: Literal["enforce", "audit_only"] = Field(
         default="enforce", exclude_if=lambda v: v == "enforce")
-    prompt_version: Literal["v4", "v5"] = "v4"
+    prompt_version: Literal["v4", "v5", "v6"] = "v4"
     scorer_version: Literal["2"] = "2"
     feedback_rounds: Literal[0] = 0
+    # Optional request ceilings for context-safe native runs. Omission keeps
+    # frozen historical profiles byte-for-byte equivalent in behavior.
+    tool_turn_max_output_tokens: int | None = Field(
+        default=None, ge=256, exclude_if=lambda v: v is None)
+    final_max_output_tokens: int | None = Field(
+        default=None, ge=256, exclude_if=lambda v: v is None)
+    repair_max_output_tokens: int | None = Field(
+        default=None, ge=256, exclude_if=lambda v: v is None)
+    # Optional retrieval-history compaction. Historical profiles omit every
+    # field and retain their original full-message behavior.
+    context_compaction_version: Literal["retrieval-ledger-v1"] | None = Field(
+        default=None, exclude_if=lambda v: v is None)
+    context_compaction_trigger_tokens: int | None = Field(
+        default=None, ge=1024, exclude_if=lambda v: v is None)
+    context_compaction_target_tokens: int | None = Field(
+        default=None, ge=512, exclude_if=lambda v: v is None)
+    search_disable_after_no_new: int | None = Field(
+        default=None, ge=2, exclude_if=lambda v: v is None)
+    reject_duplicate_searches: bool = Field(default=False, exclude_if=lambda v: not v)
+    max_search_pages_per_query: int | None = Field(
+        default=None, ge=1, le=20, exclude_if=lambda v: v is None)
+    reject_duplicate_opens: bool = Field(default=False, exclude_if=lambda v: not v)
+
+    @model_validator(mode="after")
+    def compaction_policy(self):
+        if self.native_output_format is not None and self.tool_protocol != "native-v2":
+            raise ValueError("closed output constraints require native-v2")
+        configured = self.context_compaction_version is not None
+        required = (
+            self.context_compaction_trigger_tokens,
+            self.context_compaction_target_tokens,
+            self.search_disable_after_no_new,
+        )
+        if configured != all(value is not None for value in required):
+            raise ValueError("retrieval compaction requires version, trigger, target and no-new limit")
+        if configured and self.context_compaction_target_tokens >= self.context_compaction_trigger_tokens:
+            raise ValueError("context compaction target must be below its trigger")
+        if self.reject_duplicate_searches and not configured:
+            raise ValueError("duplicate-search rejection requires retrieval compaction")
+        if ((self.max_search_pages_per_query is not None or self.reject_duplicate_opens)
+                and not configured):
+            raise ValueError("bounded retrieval requires retrieval compaction")
+        return self
 
     def fingerprint(self) -> str:
         return "sha256:" + hashlib.sha256(self.model_dump_json().encode()).hexdigest()
@@ -69,9 +114,9 @@ class ExperimentProfile:
         self.paths = {k: (self.path.parent / payload[k]).resolve() for k in required - {"experiment_version"}}
         self.conditions = (load_conditions_v3 if version == "3" else load_conditions_v2)(self.paths["conditions"])
         self.runtime = RuntimeConfig.model_validate(yaml.safe_load(self.paths["runtime"].read_text(encoding="utf-8")))
-        if version == "3" and (self.runtime.runtime_version != "3" or self.runtime.prompt_version != "v5"
+        if version == "3" and (self.runtime.runtime_version != "3" or self.runtime.prompt_version not in {"v5", "v6"}
                                or self.runtime.verification_mode != "audit_only"):
-            raise ValueError("factorial v3 requires v5 prompts and non-blocking audit_only checks")
+            raise ValueError("factorial v3 requires v5/v6 prompts and non-blocking audit_only checks")
         self.models: ModelsConfig = load_models_v1(self.paths["models"])
         if self.models.for_role("manager").model_dump() != self.models.for_role("compliance").model_dump():
             raise ValueError("v2 uses identical model parameters for both roles")

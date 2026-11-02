@@ -29,12 +29,21 @@ class PagedSourceTools(SourceTools):
     so a model cannot pair a cursor with a different query or target.
     """
 
-    def __init__(self, *, target_categories, protocol_version="2", **kwargs):
+    def __init__(self, *, target_categories, protocol_version="2",
+                 reject_duplicate_searches=False, max_search_pages_per_query=None,
+                 reject_duplicate_opens=False, **kwargs):
         super().__init__(**kwargs)
         if protocol_version not in {"2", "native-v1", "native-v2"}:
             raise ValueError("paged source protocol must be '2', 'native-v1', or 'native-v2'")
         self.protocol_version = protocol_version
         self.target_categories = tuple(target_categories)
+        self.reject_duplicate_searches = bool(reject_duplicate_searches)
+        self.max_search_pages_per_query = max_search_pages_per_query
+        self.reject_duplicate_opens = bool(reject_duplicate_opens)
+        if (max_search_pages_per_query is not None
+                and (type(max_search_pages_per_query) is not int
+                     or max_search_pages_per_query < 1)):
+            raise ValueError("max_search_pages_per_query must be a positive integer")
         self._reset_pages()
 
     @property
@@ -127,6 +136,7 @@ class PagedSourceTools(SourceTools):
         self._tokens = {}
         self._first_seen = set()
         self._returned = set()
+        self._normalized_queries = set()
 
     def begin_invocation(self, **kwargs):
         super().begin_invocation(**kwargs)
@@ -155,7 +165,14 @@ class PagedSourceTools(SourceTools):
         ranked = self._rankings[key]
         selected = ranked[offset : offset + self._top_k]
         end = offset + len(selected)
-        has_more = end < len(ranked)
+        source_has_more = end < len(ranked)
+        page_number = offset // self._top_k + 1
+        page_limit_reached = bool(
+            source_has_more
+            and self.max_search_pages_per_query is not None
+            and page_number >= self.max_search_pages_per_query
+        )
+        has_more = source_has_more and not page_limit_reached
         next_cursor = None
         if has_more:
             cursor_key = (key, end)
@@ -214,6 +231,13 @@ class PagedSourceTools(SourceTools):
             "target_category": target,
             "query": query,
         }
+        if self.max_search_pages_per_query is not None:
+            payload.update(
+                source_has_more=source_has_more,
+                page_number=page_number,
+                page_limit_reached=page_limit_reached,
+                max_pages_per_query=self.max_search_pages_per_query,
+            )
         if repeat_first:
             payload["notice"] = (
                 "First page already provided; use next_cursor to continue. "
@@ -242,6 +266,13 @@ class PagedSourceTools(SourceTools):
                     query, target = self._validate_query(
                         arguments["query"], arguments["target_category"]
                     )
+                    normalized = (tuple(tokenize(query)), target)
+                    if self.reject_duplicate_searches and normalized in self._normalized_queries:
+                        raise SourceToolError(
+                            "duplicate normalized search query; use existing candidates, "
+                            "continue with the offered cursor, or reformulate"
+                        )
+                    self._normalized_queries.add(normalized)
                     key = (query, target)
                     return self._page(
                         tool=tool,
@@ -330,5 +361,10 @@ class PagedSourceTools(SourceTools):
                 raise SourceToolError(
                     f"{candidate!r} was not returned by search in this node invocation; "
                     "search it before opening it"
+                )
+            if self.reject_duplicate_opens and candidate in self.ledger.opened_ids:
+                raise SourceToolError(
+                    f"{candidate!r} was already opened in this node invocation; "
+                    "reuse the exact paragraph text already returned"
                 )
         return super()._open(paragraph_id)

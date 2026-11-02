@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 $taskRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $python = Join-Path $taskRoot '.venv\Scripts\python.exe'
 $url = "http://127.0.0.1:$Port"
+$env:PILOT01_EXECUTION_BACKEND = 'api'
 $ready = $false
 try { $ready = (Invoke-RestMethod "$url/api/health" -TimeoutSec 2).app -eq 'pilot01-console' } catch { }
 if (-not $ready) {

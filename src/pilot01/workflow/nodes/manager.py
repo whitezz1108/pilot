@@ -196,5 +196,13 @@ def make_llm_manager_node(
             "native" if runtime is not None and runtime.tool_protocol in {"native-v1", "native-v2"} else "legacy-text"
         ),
         strict_native_state_machine=runtime is not None and runtime.tool_protocol == "native-v2",
+        native_output_format=runtime.native_output_format if runtime else None,
+        tool_turn_max_output_tokens=(runtime.tool_turn_max_output_tokens if runtime else None),
+        final_max_output_tokens=(runtime.final_max_output_tokens if runtime else None),
+        repair_max_output_tokens=(runtime.repair_max_output_tokens if runtime else None),
+        context_compaction_version=(runtime.context_compaction_version if runtime else None),
+        context_compaction_trigger_tokens=(runtime.context_compaction_trigger_tokens if runtime else None),
+        context_compaction_target_tokens=(runtime.context_compaction_target_tokens if runtime else None),
+        search_disable_after_no_new=(runtime.search_disable_after_no_new if runtime else None),
     )
 

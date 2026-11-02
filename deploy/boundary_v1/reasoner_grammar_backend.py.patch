@@ -1,0 +1,26 @@
+--- before/reasoner_grammar_backend.py
++++ after/reasoner_grammar_backend.py
+@@ -280,7 +280,11 @@
+                 f"could not be encoded by the tokenizer."
+             )
+         self.think_end_ids = think_end_ids
+-        self._enable_strict_thinking = enable_strict_thinking
++        # The detector and decoder must share one reasoning boundary.
++        self._explicit_reasoning_end = getattr(
++            reasoning_parser.detector, "requires_explicit_reasoning_end", False
++        )
++        self._enable_strict_thinking = enable_strict_thinking or self._explicit_reasoning_end
+         self.think_excluded_token_ids = self._get_think_excluded_token_ids(
+             reasoning_parser, tokenizer
+         )
+@@ -319,6 +323,10 @@
+                     f"tokenizer. All excluded tokens must be encodable for strict "
+                     f"reasoning mode to function correctly."
+                 )
++            if self._explicit_reasoning_end and len(new_ids) != 1:
++                raise ValueError(
++                    f"Explicit reasoning boundary requires a single control token: {token!r}"
++                )
+             excluded_ids += new_ids
+         return excluded_ids
+ 

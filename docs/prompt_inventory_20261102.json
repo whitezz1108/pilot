@@ -1,0 +1,185 @@
+{
+  "as_of": "2026-11-02 Asia/Shanghai",
+  "active_profile": "config/experiment_native_tools_closed_v4.yaml",
+  "active_role_prompts": [
+    "prompts/manager_v6.md",
+    "prompts/compliance_v6.md"
+  ],
+  "repair_prompt": "prompts/repair_v3.md",
+  "template_count": 18,
+  "templates": [
+    {
+      "path": "prompts/compliance_v1.md",
+      "usage": "historical_role_template",
+      "sha256": "6b4b568b2aa70ce1704772c9f64ebbb966dfd259d232332434ce07c18324134f"
+    },
+    {
+      "path": "prompts/compliance_v2.md",
+      "usage": "historical_role_template",
+      "sha256": "204d9bfdfabc56b8e25bdf1a203f26edfedc503428ce0e3fe6a9b01ae664732e"
+    },
+    {
+      "path": "prompts/compliance_v3.md",
+      "usage": "historical_role_template",
+      "sha256": "5818afe29c8b130539a7e61d71cc565ef8a0848f30c2f477910a2b170904a0b5"
+    },
+    {
+      "path": "prompts/compliance_v4.md",
+      "usage": "historical_role_template",
+      "sha256": "f6e3c584432b48716a56fc53860c80aec713287cc0457fadb1e781ef25298558"
+    },
+    {
+      "path": "prompts/compliance_v5.md",
+      "usage": "historical_role_template",
+      "sha256": "17a6095b167b9e9523f356b7c94c4611291ac4a7d8a5da66724790c8caea544d"
+    },
+    {
+      "path": "prompts/compliance_v6.md",
+      "usage": "active_closed_v4_role_template",
+      "sha256": "878f1c79929738c952b64acea57163d9f96bb6e77d8c4220c8b46de66c376acb"
+    },
+    {
+      "path": "prompts/manager_v1.md",
+      "usage": "historical_role_template",
+      "sha256": "4922ab11ef1c757bc4c83063bd4fe2d263744260e69da98d6d0c302aad6db347"
+    },
+    {
+      "path": "prompts/manager_v2.md",
+      "usage": "historical_role_template",
+      "sha256": "b67e60b485c44e1e389958c20df88df2db1536dac052c83888575f204fff13ed"
+    },
+    {
+      "path": "prompts/manager_v3.md",
+      "usage": "historical_role_template",
+      "sha256": "e0eb5f7a64ca904090c7aa6aeb08545834970eb7fb7b943c9dd8027244c96730"
+    },
+    {
+      "path": "prompts/manager_v4.md",
+      "usage": "historical_role_template",
+      "sha256": "cb1910e2f71f2dcf4542520ebd98b732d6d35f24ac03f124fdfebd840668a8ef"
+    },
+    {
+      "path": "prompts/manager_v5.md",
+      "usage": "historical_role_template",
+      "sha256": "26a08762d78853f269df9e6912c3355596a474b73f062e0bb730842610e900a5"
+    },
+    {
+      "path": "prompts/manager_v6.md",
+      "usage": "active_closed_v4_role_template",
+      "sha256": "266d19aa5975d4aab9cb733557eed9a38b233d72355faf42e386bf75980d9865"
+    },
+    {
+      "path": "prompts/neutral_claim_candidates_recovery_v1.md",
+      "usage": "material_preparation_template",
+      "sha256": "39acf3683a33a780f479fe0fb040715601553e159fa70556cd2c49410f8a31e5"
+    },
+    {
+      "path": "prompts/neutral_claim_candidates_v1.md",
+      "usage": "material_preparation_template",
+      "sha256": "8617fbe519deff7cdfd35546f3274566d8b703a7c1b2ffa859826903ac2ab6ed"
+    },
+    {
+      "path": "prompts/neutral_claim_review_v1.md",
+      "usage": "material_preparation_template",
+      "sha256": "64acad18d04d34730a6d737fb50504f61223ec13e8b4b244124cade2ca4e06a6"
+    },
+    {
+      "path": "prompts/repair_v1.md",
+      "usage": "historical_repair_template",
+      "sha256": "84ca621bea0eb2328c4dcb977061f00fec73e64c53e33a6c0f760b786b8b4727"
+    },
+    {
+      "path": "prompts/repair_v2.md",
+      "usage": "historical_repair_template",
+      "sha256": "f8fc4e53835efd6675f6d748a991b1ded15547a0a523454816c6f30003e55d08"
+    },
+    {
+      "path": "prompts/repair_v3.md",
+      "usage": "repair_template_loaded_by_role_factory",
+      "sha256": "b4a0b79848034b8dea639e56833a3e7bee8ff8172f9aea1c66334e20bce1416d"
+    }
+  ],
+  "dynamic_prompt_and_schema_sources": [
+    {
+      "path": "src/pilot01/prompts.py",
+      "purpose": "Template loading, strict placeholders, default repair v3; runtime overrides role templates to v6."
+    },
+    {
+      "path": "src/pilot01/workflow/nodes/disclosure.py",
+      "purpose": "D0/D1/D2 notices, V checking task instructions, system/user message assembly."
+    },
+    {
+      "path": "src/pilot01/source/verification_v3.py",
+      "purpose": "RULES: numbered checks disclosed in D2; distinct from the V treatment."
+    },
+    {
+      "path": "src/pilot01/workflow/nodes/tool_loop.py",
+      "purpose": "Tool instructions, result/history rendering, compaction ledger, search stop and final-only instructions."
+    },
+    {
+      "path": "src/pilot01/workflow/nodes/render.py",
+      "purpose": "Policy, memo, handoff and historical governance text rendering."
+    },
+    {
+      "path": "src/pilot01/workflow/nodes/manager.py",
+      "purpose": "Manager prompt and repair template selection, message/request construction."
+    },
+    {
+      "path": "src/pilot01/workflow/nodes/compliance.py",
+      "purpose": "Compliance prompt and repair template selection, message/request construction."
+    },
+    {
+      "path": "src/pilot01/workflow/nodes/llm_agent.py",
+      "purpose": "Final output schema and format-repair message construction."
+    },
+    {
+      "path": "src/pilot01/source/pagination.py",
+      "purpose": "Native tool descriptions and dynamic parameter schema visible to the model."
+    },
+    {
+      "path": "src/pilot01/source/tools.py",
+      "purpose": "Source tool descriptions and legacy tool schema."
+    },
+    {
+      "path": "src/pilot01/schemas.py",
+      "purpose": "Structured output schema, enum values and field descriptions."
+    },
+    {
+      "path": "src/pilot01/model/native_constraints.py",
+      "purpose": "Closed output grammar derived from final schema and currently authorized tools."
+    },
+    {
+      "path": "src/pilot01/model/parsing.py",
+      "purpose": "Structured parsing and repair invocation; repair log provenance."
+    },
+    {
+      "path": "config/policies/policy_v2.yaml",
+      "purpose": "Current experimental policy injected into role system prompts."
+    },
+    {
+      "path": "config/policies/policy_v1.yaml",
+      "purpose": "Historical policy."
+    },
+    {
+      "path": "config/runtime_native_tools_closed_v4.yaml",
+      "purpose": "Active native-v2 / prompt_version v6 runtime selector."
+    },
+    {
+      "path": "src/pilot01/experiment/development/neutral_materials.py",
+      "purpose": "Material candidate prompt invocation."
+    },
+    {
+      "path": "scripts/prepare_clean80_materials.py",
+      "purpose": "Material preparation/review message construction and versioned template invocation."
+    },
+    {
+      "path": "scripts/prepare_neutral_claims.py",
+      "purpose": "Material preparation/review message construction and versioned template invocation."
+    },
+    {
+      "path": "scripts/review_neutral_claims.py",
+      "purpose": "Material preparation/review message construction and versioned template invocation."
+    }
+  ],
+  "note": "Exact run messages include case-specific materials, disclosure/V settings, exposed tool schemas and history; template paths alone do not reconstruct a recorded request. Read each run model_calls.jsonl for the exact request. No live model request was made for this Git sync."
+}

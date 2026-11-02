@@ -54,7 +54,9 @@ from ...model import (
     RepairSpec,
     StructuredCallResult,
     call_structured,
+    estimate_model_request_tokens,
     extract_json_object,
+    prepare_model_request,
     record_call,
 )
 from ...model.tool_protocol import ToolTransport
@@ -100,6 +102,105 @@ before dispatch rather than after. What the prompt advertises ("at most
 TOOL_REQUEST_KEY = "tool_request"
 NO_TOOL_REQUEST = object()
 """Distinguish an absent request from an explicitly malformed null request."""
+
+SEARCH_TOOLS = frozenset({"search_contract", "next_search_page"})
+
+
+@dataclass
+class _HistorySegment:
+    """One complete assistant-tool exchange kept or compacted atomically."""
+
+    messages: tuple[ModelMessage, ...]
+    outcome: ToolOutcome
+    used: int
+    new_result_ids: tuple[str, ...]
+    compacted: bool = False
+    exposed: bool = False
+
+    @property
+    def is_search(self) -> bool:
+        return self.outcome.tool in SEARCH_TOOLS
+
+    @property
+    def added_no_information(self) -> bool:
+        return self.is_search and (not self.outcome.ok or not self.new_result_ids)
+
+
+def _ledger_lines(segments: Sequence[_HistorySegment]) -> list[str]:
+    lines = [
+        "RUNTIME RETRIEVAL LEDGER",
+        "Older complete tool-call/result pairs were removed only from model context; "
+        "the append-only experiment logs remain unchanged.",
+    ]
+    for segment in segments:
+        outcome = segment.outcome
+        query = outcome.payload.get("query") or outcome.arguments.get("query")
+        target = outcome.payload.get("target_category") or outcome.arguments.get("target_category")
+        label = f"#{segment.used} {outcome.tool}"
+        if query:
+            label += f" query={json.dumps(str(query), ensure_ascii=False)}"
+        if target:
+            label += f" target={target}"
+        if not outcome.ok:
+            detail = str(outcome.error or "unknown error").replace("\n", " ")[:240]
+            lines.append(f"- {label}: error; {detail}")
+        elif not outcome.result_ids:
+            lines.append(f"- {label}: no paragraph ids returned")
+        elif not segment.new_result_ids:
+            lines.append(
+                f"- {label}: no new paragraph ids; repeated={','.join(outcome.result_ids)}"
+            )
+        else:
+            lines.append(
+                f"- {label}: new candidate ids={','.join(segment.new_result_ids)}; "
+                f"all returned ids={','.join(outcome.result_ids)}"
+            )
+    return lines
+
+
+def _history_messages(
+    initial_messages: tuple[ModelMessage, ...],
+    history: Sequence[_HistorySegment],
+    *,
+    rounds: int,
+    max_tool_rounds: int,
+    search_disabled: bool,
+) -> tuple[ModelMessage, ...]:
+    """Render history in order, replacing compacted runs with short ledgers."""
+    rendered = list(initial_messages)
+    pending: list[_HistorySegment] = []
+
+    def flush() -> None:
+        if not pending:
+            return
+        lines = _ledger_lines(pending)
+        lines.append(
+            f"Tool requests used: {rounds}/{max_tool_rounds}; "
+            f"remaining: {max_tool_rounds - rounds}."
+        )
+        rendered.append(ModelMessage(role="user", content="\n".join(lines)))
+        pending.clear()
+
+    for segment in history:
+        if segment.compacted:
+            pending.append(segment)
+        else:
+            flush()
+            rendered.extend(segment.messages)
+    flush()
+    if search_disabled:
+        rendered.append(
+            ModelMessage(
+                role="user",
+                content=(
+                    "RUNTIME SEARCH STOP: recent searches added no new paragraph ids. "
+                    "Search and pagination are no longer available in this invocation. "
+                    "Open an already eligible paragraph id or submit the final answer; "
+                    "mark unresolved targets unknown."
+                ),
+            )
+        )
+    return tuple(rendered)
 
 
 class ToolLoopError(ProtocolError):
@@ -325,6 +426,10 @@ class ToolLoopResult:
     """How many tool requests were executed."""
     repaired: bool
     """Whether the final answer needed the one format repair."""
+    compacted_tool_turns: int = 0
+    """Tool exchanges removed from model context but retained in raw logs."""
+    search_disabled: bool = False
+    """Whether the deterministic no-new-information stop rule fired."""
 
     @property
     def structured(self) -> StructuredCallResult:
@@ -350,6 +455,14 @@ def run_tool_loop(
     audit: Callable[[ModelRequest], None] | None = None,
     tool_transport: ToolTransport = "legacy-text",
     strict_native_state_machine: bool = False,
+    native_output_format: str | None = None,
+    tool_turn_max_output_tokens: int | None = None,
+    final_max_output_tokens: int | None = None,
+    repair_max_output_tokens: int | None = None,
+    context_compaction_version: str | None = None,
+    context_compaction_trigger_tokens: int | None = None,
+    context_compaction_target_tokens: int | None = None,
+    search_disable_after_no_new: int | None = None,
 ) -> ToolLoopResult:
     """Run one node invocation to a final structured answer.
 
@@ -364,21 +477,61 @@ def run_tool_loop(
     indices, and two writers numbering the same log would be a bug waiting to
     happen.
     """
-    messages = list(initial_messages)
+    if native_output_format is not None:
+        if native_output_format != "closed-final-or-tool-v1" or not strict_native_state_machine or tool_transport != "native":
+            raise ValueError("closed output constraints require strict native-v2")
+        from ...model.native_constraints import schema_without_metadata
+        final_output_schema = schema_without_metadata(output_model.model_json_schema())
+    else:
+        final_output_schema = None
+    if context_compaction_version not in (None, "retrieval-ledger-v1"):
+        raise ValueError("unknown context compaction version")
+    if context_compaction_version is not None:
+        if not strict_native_state_machine or tool_transport != "native":
+            raise ValueError("retrieval compaction requires the strict native state machine")
+        if (context_compaction_trigger_tokens is None
+                or context_compaction_target_tokens is None
+                or search_disable_after_no_new is None):
+            raise ValueError("retrieval compaction policy is incomplete")
+        if context_compaction_target_tokens >= context_compaction_trigger_tokens:
+            raise ValueError("context compaction target must be below its trigger")
     records: list[Any] = []
     outcomes: list[ToolOutcome] = []
+    history: list[_HistorySegment] = []
     call_index = 0
     rounds = 0
     seen_tool_call_ids: set[str] = set()
+    seen_result_ids: set[str] = set()
+    consecutive_no_new_searches = 0
+    search_disabled = False
 
     def emit(record: Any) -> None:
         records.append(record)
         if call_log is not None:
             call_log.append(record)
 
-    while True:
-        request_messages = tuple(messages)
-        final_only = tool_transport == "native" and rounds >= max_tool_rounds
+    def observe_outcome(outcome: ToolOutcome) -> tuple[str, ...]:
+        nonlocal consecutive_no_new_searches, search_disabled
+        new_ids = tuple(pid for pid in outcome.result_ids if pid not in seen_result_ids)
+        seen_result_ids.update(outcome.result_ids)
+        if outcome.tool in SEARCH_TOOLS:
+            if not outcome.ok or not new_ids:
+                consecutive_no_new_searches += 1
+            else:
+                consecutive_no_new_searches = 0
+            if (search_disable_after_no_new is not None
+                    and consecutive_no_new_searches >= search_disable_after_no_new):
+                search_disabled = True
+        return new_ids
+
+    def make_request(*, final_only: bool) -> ModelRequest:
+        request_messages = _history_messages(
+            initial_messages,
+            history,
+            rounds=rounds,
+            max_tool_rounds=max_tool_rounds,
+            search_disabled=search_disabled,
+        )
         if final_only:
             request_messages += (
                 ModelMessage(
@@ -391,13 +544,18 @@ def run_tool_loop(
                 ),
             )
         request = build_request(request_messages)
+        if native_output_format is not None:
+            request = request.model_copy(update={"native_output_format": native_output_format,
+                                                 "final_output_schema": final_output_schema})
         if strict_native_state_machine and not final_only:
             if tool_transport != "native":
                 raise ValueError("strict native state machine requires native tool transport")
-            # The offered schemas are the whole state transition surface.  In
-            # particular, a continuation is absent until the tool layer has
-            # issued a cursor, and parallel calls are disabled at the provider.
-            definitions = tools.tool_definitions if tools is not None else ()
+            definitions = tools.tool_definitions if tools is not None and tools.available else ()
+            if search_disabled:
+                definitions = tuple(
+                    definition for definition in definitions
+                    if definition.name not in SEARCH_TOOLS
+                )
             request = request.model_copy(
                 update={
                     "tools": definitions,
@@ -409,10 +567,34 @@ def run_tool_loop(
             request = request.model_copy(
                 update={"tools": (), "tool_choice": None, "parallel_tool_calls": None}
             )
-        if audit is not None:
-            audit(request)
+        ceiling = final_max_output_tokens if final_only else tool_turn_max_output_tokens
+        if ceiling is not None and request.params.max_output_tokens > ceiling:
+            request = request.model_copy(update={"params": request.params.model_copy(
+                update={"max_output_tokens": ceiling})})
+        return request
 
+    while True:
+        final_only = tool_transport == "native" and rounds >= max_tool_rounds
+        request = make_request(final_only=final_only)
         try:
+            if context_compaction_version is not None:
+                estimated = estimate_model_request_tokens(client, request)
+                if estimated is None:
+                    raise ModelClientError(
+                        "retrieval-ledger-v1 requires a local request token estimator"
+                    )
+                if estimated > context_compaction_trigger_tokens:
+                    for segment in history:
+                        if (segment.is_search and not segment.compacted
+                                and (segment.exposed or segment.added_no_information)):
+                            segment.compacted = True
+                            request = make_request(final_only=final_only)
+                            estimated = estimate_model_request_tokens(client, request)
+                            if estimated <= context_compaction_target_tokens:
+                                break
+            if audit is not None:
+                audit(request)
+            request = prepare_model_request(client, request)
             response = client.generate(request)
         except ModelClientError as exc:
             emit(
@@ -428,11 +610,22 @@ def run_tool_loop(
             )
             raise
 
+        for segment in history:
+            if not segment.compacted:
+                segment.exposed = True
+
         # A truncated tool-shaped response is not a valid instruction to dispatch.
         if getattr(response, "finish_reason", None) == "length":
             emit(record_call(index=call_index, request=request, prompt_version=request.prompt_version,
                              attempt=0, is_repair=False, response=response, parse_error="output_truncated"))
-            raise ModelOutputError(f"output limit ({request.params.max_output_tokens} tokens, finish_reason='length'); no repair attempted")
+            usage = response.usage
+            raise ModelOutputError(
+                "output limit (finish_reason='length'; "
+                f"requested_max_output_tokens={request.params.max_output_tokens}, "
+                f"actual_prompt_tokens={usage.prompt_tokens if usage else None}, "
+                f"actual_completion_tokens={usage.completion_tokens if usage else None}); "
+                "the provider's effective limit may differ from the requested maximum; no repair attempted"
+            )
         native_calls: tuple[ModelToolCall, ...] = ()
         if tool_transport == "native":
             try:
@@ -501,6 +694,7 @@ def run_tool_loop(
                     expected_role=expected_role,
                     first_index=call_index,
                     first_response=response,
+                    repair_max_output_tokens=repair_max_output_tokens,
                 )
             finally:
                 for record in sink.records:
@@ -511,6 +705,8 @@ def run_tool_loop(
                 tool_outcomes=tuple(outcomes),
                 rounds=rounds,
                 repaired=result.repaired,
+                compacted_tool_turns=sum(segment.compacted for segment in history),
+                search_disabled=search_disabled,
             )
 
         # A tool request. Record the turn, then act on it.
@@ -577,12 +773,12 @@ def run_tool_loop(
                 )
                 outcomes.append(outcome)
                 rounds += 1
-                turn_outcomes.append((outcome, rounds))
-            messages.append(
-                ModelMessage(role="assistant", tool_calls=native_calls)
-            )
-            for native_call, (outcome, used) in zip(native_calls, turn_outcomes, strict=True):
-                messages.append(
+                turn_outcomes.append((outcome, rounds, observe_outcome(outcome)))
+            turn_messages = [ModelMessage(role="assistant", tool_calls=native_calls)]
+            for native_call, (outcome, used, _new_ids) in zip(
+                native_calls, turn_outcomes, strict=True
+            ):
+                turn_messages.append(
                     ModelMessage(
                         role="tool",
                         name=native_call.name,
@@ -597,6 +793,14 @@ def run_tool_loop(
                         ),
                     )
                 )
+            primary, used, new_ids = turn_outcomes[0]
+            segment = _HistorySegment(
+                messages=tuple(turn_messages), outcome=primary, used=used,
+                new_result_ids=new_ids,
+            )
+            if context_compaction_version is not None and segment.added_no_information:
+                segment.compacted = True
+            history.append(segment)
         else:
             outcome = _dispatch(
                 tools,
@@ -606,11 +810,19 @@ def run_tool_loop(
             )
             outcomes.append(outcome)
             rounds += 1
+            new_ids = observe_outcome(outcome)
             rendered = render_tool_result(outcome)
             if getattr(tools, "protocol_version", "1") == "2":
                 rendered += f"\nTool requests used: {rounds}/{max_tool_rounds}; remaining: {max_tool_rounds - rounds}."
-            messages.append(ModelMessage(role="assistant", content=response.text))
-            messages.append(ModelMessage(role="user", content=rendered))
+            history.append(_HistorySegment(
+                messages=(
+                    ModelMessage(role="assistant", content=response.text),
+                    ModelMessage(role="user", content=rendered),
+                ),
+                outcome=outcome,
+                used=rounds,
+                new_result_ids=new_ids,
+            ))
 
 
 def _dispatch(

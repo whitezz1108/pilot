@@ -32,7 +32,7 @@ import urllib.request
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 
-from .reasoning import StreamCapture, observe_reasoning
+from .reasoning import StreamCapture, count_local_tokens, observe_reasoning
 from .tool_protocol import ModelToolCall, ToolTransport
 
 from .client import (
@@ -116,6 +116,16 @@ def _truncate(text: str, limit: int = 2000) -> str:
     return text if len(text) <= limit else f"{text[:limit]}...[truncated]"
 
 
+def read_sglang_capacity(base_url):
+    """Read local serving metadata inside the existing provider network boundary."""
+    endpoint = base_url.rstrip("/").removesuffix("/v1") + "/get_server_info"
+    try:
+        with urllib.request.urlopen(endpoint, timeout=15) as response:
+            return json.load(response)
+    except (OSError, ValueError) as exc:
+        raise ModelClientError(f"serving_capacity_failure: cannot read actual SGLang capacity ({type(exc).__name__})") from exc
+
+
 class OpenAICompatibleClient:
     """A :class:`~pilot01.model.client.ModelClient` for OpenAI-shaped endpoints.
 
@@ -136,6 +146,9 @@ class OpenAICompatibleClient:
         reasoning_stream: bool = False,
         reasoning_tokenizer_path: str | None = None,
         tool_transport: ToolTransport = "legacy-text",
+        context_window_tokens: int | None = None,
+        context_safety_tokens: int = 0,
+        minimum_output_tokens: int = 1,
     ) -> None:
         resolved_url = base_url or os.environ.get(DEFAULT_BASE_URL_ENV)
         if not resolved_url:
@@ -170,6 +183,15 @@ class OpenAICompatibleClient:
         self._reasoning_stream = reasoning_stream
         self._reasoning_tokenizer_path = reasoning_tokenizer_path
         self._tool_transport = tool_transport
+        if context_window_tokens is not None and context_window_tokens < 1:
+            raise ValueError("context_window_tokens must be positive")
+        if context_safety_tokens < 0 or minimum_output_tokens < 1:
+            raise ValueError("context safety must be nonnegative and minimum output positive")
+        if context_window_tokens is not None and not reasoning_tokenizer_path:
+            raise ValueError("context budgeting requires reasoning_tokenizer_path")
+        self._context_window_tokens = context_window_tokens
+        self._context_safety_tokens = context_safety_tokens
+        self._minimum_output_tokens = minimum_output_tokens
 
     @property
     def provider(self) -> str:
@@ -182,6 +204,53 @@ class OpenAICompatibleClient:
     @property
     def tool_transport(self) -> ToolTransport:
         return self._tool_transport
+
+    def prepare_request(self, request: ModelRequest) -> ModelRequest:
+        """Fit the declared completion into the endpoint before any HTTP call."""
+        if self._context_window_tokens is None:
+            return request
+        try:
+            estimated_input, tokenizer_sha = self._estimate_request(request)
+        except Exception as exc:
+            raise ModelClientError(
+                f"context_budget_failure: local tokenizer unavailable ({type(exc).__name__})"
+            ) from exc
+        available = (self._context_window_tokens - self._context_safety_tokens
+                     - estimated_input)
+        if available < self._minimum_output_tokens:
+            raise ModelClientError(
+                "context_budget_failure: estimated input "
+                f"{estimated_input} + safety {self._context_safety_tokens} leaves "
+                f"{available} output tokens in context {self._context_window_tokens}; "
+                f"minimum is {self._minimum_output_tokens}; tokenizer={tokenizer_sha[:12]}"
+            )
+        effective = min(request.params.max_output_tokens, available)
+        if effective == request.params.max_output_tokens:
+            return request
+        params = request.params.model_copy(update={"max_output_tokens": effective})
+        return request.model_copy(update={"params": params})
+
+    def _estimate_request(self, request: ModelRequest) -> tuple[int, str]:
+        # Count only provider-visible conversational material. The fixed safety
+        # reserve covers chat-template framing and tokenizer/server differences.
+        material = {
+            "messages": [message.wire_dict() for message in request.messages],
+            "tools": [tool.openai_function() for tool in request.tools],
+        }
+        serialized = json.dumps(material, ensure_ascii=False, separators=(",", ":"))
+        return count_local_tokens(serialized, self._reasoning_tokenizer_path)
+
+    def estimate_request_tokens(self, request: ModelRequest) -> int:
+        """Estimate the provider-visible input without sending an HTTP request."""
+        if not self._reasoning_tokenizer_path:
+            raise ModelClientError("request token estimation requires a local tokenizer")
+        try:
+            count, _ = self._estimate_request(request)
+        except Exception as exc:
+            raise ModelClientError(
+                f"context_budget_failure: local tokenizer unavailable ({type(exc).__name__})"
+            ) from exc
+        return count
 
     # -- request construction (pure; exercised by tests without a network) ---
 
@@ -244,6 +313,13 @@ class OpenAICompatibleClient:
             payload.pop('response_format', None)
             payload['ebnf'] = compile_grammar(build_schema(payload['messages'], request.role))
 
+        if request.native_output_format is not None:
+            if self._tool_transport != "native" or strict_tool_protocol:
+                raise ModelClientError("closed native output requires native transport without the legacy grammar")
+            from .native_constraints import closed_native_response_format
+            payload.pop("ebnf", None)
+            payload["response_format"] = closed_native_response_format(request.final_output_schema, request.tools)
+
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
@@ -265,6 +341,7 @@ class OpenAICompatibleClient:
                 f"openai-compatible client received {type(request).__name__}; "
                 "expected ModelRequest"
             )
+        request = self.prepare_request(request)
         http_request = self.build_request(request)
         # Local transport metadata only; never a header or a provider parameter.
         http_request.pilot01_model_call_id = request.model_call_id
@@ -293,7 +370,8 @@ class OpenAICompatibleClient:
             self._attach_partial(error, http_request, request, requested_at)
             raise error from exc
         except (ModelClientError, ValueError, OSError) as exc:
-            error = ModelClientError(f"model stream failed: {type(exc).__name__}")
+            detail = _truncate(_redact(str(exc), self._api_key))
+            error = ModelClientError(f"model stream failed: {type(exc).__name__}: {detail}")
             self._attach_partial(error, http_request, request, requested_at)
             raise error from exc
 

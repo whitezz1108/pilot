@@ -1,0 +1,7 @@
+# Successor to context-compact v2 after the CASE-0077 bounded retrieval trace.
+experiment_version: "3"
+conditions: conditions_v3.yaml
+runtime: runtime_native_tools_retrieval_bounded_v3.yaml
+models: models_bf16_mtp_xhigh_native_context_safe_v1.yaml
+workflow: workflow_v1.yaml
+policy: policies/policy_v2.yaml

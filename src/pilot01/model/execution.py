@@ -15,6 +15,7 @@ import urllib.error
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 import yaml
@@ -33,6 +34,21 @@ class EndpointSettings(BaseModel):
     reasoning_stream: bool = Field(default=False, exclude_if=lambda v: not v)
     reasoning_tokenizer_path: str | None = Field(default=None, exclude_if=lambda v: v is None)
     tool_transport: ToolTransport = "legacy-text"
+    context_window_tokens: int | None = Field(default=None, ge=1, exclude_if=lambda v: v is None)
+    context_safety_tokens: int = Field(default=0, ge=0, exclude_if=lambda v: v == 0)
+    minimum_output_tokens: int = Field(default=1, ge=1, exclude_if=lambda v: v == 1)
+    capacity_preflight: Literal["sglang-v1"] | None = Field(default=None, exclude_if=lambda v: v is None)
+
+    @model_validator(mode="after")
+    def context_budget(self):
+        if self.capacity_preflight is not None and self.context_window_tokens is None:
+            raise ValueError("capacity preflight requires an explicit context budget")
+        if self.context_window_tokens is not None and self.reasoning_tokenizer_path is None:
+            raise ValueError("context budgeting requires reasoning_tokenizer_path")
+        if (self.context_window_tokens is not None
+                and self.context_safety_tokens + self.minimum_output_tokens >= self.context_window_tokens):
+            raise ValueError("context safety and minimum output must fit the context window")
+        return self
 
 
 class ExecutionSettings(BaseModel):
@@ -43,6 +59,10 @@ class ExecutionSettings(BaseModel):
     endpoints: tuple[EndpointSettings, ...] = (EndpointSettings(slot=1, max_in_flight=6),)
     # Absent preserves the historical per-run placement and serialized policy.
     role_slots: dict[str, int] | None = Field(default=None, exclude_if=lambda v: v is None)
+    # A role may use a deterministic pool of endpoints. Each role within a run
+    # remains pinned to one selected endpoint for all of its tool turns.
+    role_slot_pools: dict[str, tuple[int, ...]] | None = Field(
+        default=None, exclude_if=lambda v: v is None)
 
     @model_validator(mode="after")
     def unique(self):
@@ -53,6 +73,15 @@ class ExecutionSettings(BaseModel):
                 raise ValueError("role_slots must declare exactly manager and compliance")
             if not set(self.role_slots.values()) <= {e.slot for e in self.endpoints}:
                 raise ValueError("role_slots must reference declared endpoint slots")
+        if self.role_slot_pools is not None:
+            if self.role_slots is not None:
+                raise ValueError("role_slots and role_slot_pools are mutually exclusive")
+            if set(self.role_slot_pools) != {"manager", "compliance"}:
+                raise ValueError("role_slot_pools must declare exactly manager and compliance")
+            available = {e.slot for e in self.endpoints}
+            for role, slots in self.role_slot_pools.items():
+                if not slots or len(set(slots)) != len(slots) or not set(slots) <= available:
+                    raise ValueError(f"role_slot_pools[{role}] must contain unique declared endpoints")
         group_limits = {}
         for endpoint in self.endpoints:
             if endpoint.quota_group is not None:
@@ -117,7 +146,7 @@ class PooledLiveFactory:
     is forbidden. Account-level/shared-key quotas must be configured by the
     operator rather than inferred from the number of keys.
     """
-    def __init__(self, settings, jobs, directory, *, transport=None, sleeper=time.sleep):
+    def __init__(self, settings, jobs, directory, *, transport=None, sleeper=time.sleep, capacity_reader=None):
         self.settings = settings
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -141,15 +170,37 @@ class PooledLiveFactory:
                 raise ModelClientError(f"API slot {endpoint.slot} requires {url_name} and {key_name}")
             self.urls[endpoint.slot] = os.environ[url_name]
             self.key_names[endpoint.slot] = key_name
+        self.serving_capacities = {}
+        for endpoint in settings.endpoints:
+            if endpoint.capacity_preflight is not None:
+                from .openai_compat import read_sglang_capacity
+                from .serving_capacity import validate_sglang_capacity
+                info = (capacity_reader or read_sglang_capacity)(self.urls[endpoint.slot])
+                self.serving_capacities[str(endpoint.slot)] = validate_sglang_capacity(info, endpoint)
         # Fixed role placement is opt-in; no fallback to the other role's GPU.
         self.role_routing = {}
         jobs = tuple(jobs)
         if settings.role_slots is not None:
             self.role_routing = {job.run_id: dict(settings.role_slots) for job in jobs}
+        elif settings.role_slot_pools is not None:
+            endpoints = {endpoint.slot: endpoint for endpoint in settings.endpoints}
+            assigned = {role: {slot: 0 for slot in slots}
+                        for role, slots in settings.role_slot_pools.items()}
+            for job in jobs:
+                route = {}
+                for role in ("manager", "compliance"):
+                    slots = settings.role_slot_pools[role]
+                    slot = min(slots, key=lambda candidate: (
+                        assigned[role][candidate] / endpoints[candidate].max_in_flight,
+                        candidate,
+                    ))
+                    assigned[role][slot] += 1
+                    route[role] = slot
+                self.role_routing[job.run_id] = route
         # Smooth weighted placement; plan order, no outcome-dependent routing.
         assigned = {e.slot: 0 for e in settings.endpoints}
         self.routing = {}
-        for job in (() if settings.role_slots is not None else jobs):
+        for job in (() if self.role_routing else jobs):
             e = min(settings.endpoints, key=lambda e: (assigned[e.slot] / e.max_in_flight, e.slot))
             self.routing[job.run_id] = e.slot
             assigned[e.slot] += 1
@@ -164,12 +215,16 @@ class PooledLiveFactory:
                 for slot, url in self.urls.items()},
             run_slots=self.routing, http_audit=self.log_path.name,
             at=datetime.now(timezone.utc).isoformat())
-        if self.settings.role_slots is not None:
+        if self.role_routing:
             payload["run_role_slots"] = self.role_routing
+        if self.serving_capacities:
+            payload["serving_capacities"] = self.serving_capacities
         policy = {key: payload[key] for key in ("settings", "config_sha256",
                   "plan_fingerprint", "endpoints", "run_slots")}
-        if self.settings.role_slots is not None:
+        if self.role_routing:
             policy["run_role_slots"] = self.role_routing
+        if self.serving_capacities:
+            policy["serving_capacities"] = self.serving_capacities
         policy_path = self.directory / "execution_policy.json"
         if policy_path.exists():
             if json.loads(policy_path.read_text(encoding="utf-8")) != policy:
@@ -181,7 +236,7 @@ class PooledLiveFactory:
         path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
     def __call__(self, *, role, job):
-        slot = (self.role_routing[job.run_id][role] if self.settings.role_slots is not None
+        slot = (self.role_routing[job.run_id][role] if self.role_routing
                 else self.routing[job.run_id])
         gate = self.gates[slot]
 
@@ -231,4 +286,7 @@ class PooledLiveFactory:
             api_key_env=self.key_names[slot], transport=send,
             reasoning_stream=endpoint.reasoning_stream,
             reasoning_tokenizer_path=endpoint.reasoning_tokenizer_path,
-            tool_transport=endpoint.tool_transport)
+            tool_transport=endpoint.tool_transport,
+            context_window_tokens=endpoint.context_window_tokens,
+            context_safety_tokens=endpoint.context_safety_tokens,
+            minimum_output_tokens=endpoint.minimum_output_tokens)

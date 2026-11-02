@@ -1,0 +1,47 @@
+{
+  "as_of": "2026-11-02 Asia/Shanghai",
+  "scope": "Source synchronization checkpoint; no live experiment or service change",
+  "focused_regression": {
+    "passed": 241,
+    "failed": 0,
+    "log": ".build/git-sync-20261102/pytest-focused.log"
+  },
+  "console_regression": {
+    "passed": 22,
+    "failed": 0,
+    "log": ".build/git-sync-20261102/pytest-console.log"
+  },
+  "full_suite": {
+    "passed": 1122,
+    "failed": 86,
+    "errors": 62,
+    "skipped": 6,
+    "duration_seconds": 209.54,
+    "log": ".build/git-sync-20261102/pytest.log",
+    "green": false
+  },
+  "observed_full_suite_blockers": [
+    "Missing local data/raw/cuad/extracted/CUADv1.json required by canonical-annotation tests.",
+    "Missing local data/pilot01/clean80_v1/material_manifest.json required by factorial/material tests.",
+    "Earlier-gate subprocess suites propagate the same failures.",
+    "test_no_test_module_makes_a_network_call scans raw source strings and flags urlopen mock targets in test_experiment_watch.py and test_recovery_hardening.py. These tests use mocks; this audit result is preserved rather than reported as passing."
+  ],
+  "server_comparison": {
+    "normalization": "CRLF to LF for application source/config/template comparison",
+    "core_application_sources_match": true,
+    "all_prompt_templates_match": true,
+    "server_config_files_match": true,
+    "boundary_patch_manifest": "deploy/boundary_v1/patch_manifest.json",
+    "boundary_before_after_raw_hashes_match": true
+  },
+  "credential_and_artifact_review": {
+    "high_confidence_credential_patterns": 0,
+    "staged_raw_output_env_or_build_paths": 0,
+    "staged_files_above_5MB": 0
+  },
+  "limits": [
+    "Focused checks do not establish overall suite success.",
+    "No new model calls, serving validation or judgment-accuracy review was performed.",
+    "Generated full logs are local artifacts and are not committed."
+  ]
+}

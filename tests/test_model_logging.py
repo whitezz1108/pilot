@@ -134,6 +134,19 @@ def test_a_repaired_call_produces_two_records_in_order():
     assert log.repairs() == (log.records[1],)
 
 
+def test_format_repair_uses_its_separate_output_ceiling():
+    client = ScriptedModelClient(("not json", VALID))
+    call_structured(
+        client,
+        request(params=params(max_output_tokens=16384)),
+        ManagerOutput,
+        repair=REPAIR,
+        repair_max_output_tokens=4096,
+    )
+    assert client.requests[0].params.max_output_tokens == 16384
+    assert client.requests[1].params.max_output_tokens == 4096
+
+
 def test_the_log_can_be_filtered_by_role():
     log = ModelCallLog()
     client = ScriptedModelClient((VALID, VALID))

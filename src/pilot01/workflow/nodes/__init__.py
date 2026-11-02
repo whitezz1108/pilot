@@ -155,7 +155,10 @@ def build_llm_registry(
                                 target_categories=target_categories,
                                 top_k=runtime.page_size, excerpt_chars=runtime.excerpt_chars,
                                 protocol_version=runtime.tool_protocol,
-                                search_ranker_version=runtime.search_ranker_version)
+                                search_ranker_version=runtime.search_ranker_version,
+                                reject_duplicate_searches=runtime.reject_duplicate_searches,
+                                max_search_pages_per_query=runtime.max_search_pages_per_query,
+                                reject_duplicate_opens=runtime.reject_duplicate_opens)
 
     return NodeRegistry(
         [

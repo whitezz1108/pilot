@@ -36,6 +36,8 @@ from .client import (
     ModelParams,
     ModelRequest,
     ModelResponse,
+    estimate_model_request_tokens,
+    prepare_model_request,
     TokenUsage,
     ToolDefinition,
 )
@@ -60,6 +62,8 @@ __all__ = [
     "ModelParams",
     "ModelRequest",
     "ModelResponse",
+    "estimate_model_request_tokens",
+    "prepare_model_request",
     "TokenUsage",
     "ToolDefinition",
     "ScriptedModelClient",

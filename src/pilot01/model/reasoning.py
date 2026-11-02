@@ -30,7 +30,7 @@ class StreamCapture:
         event = json.loads(data)
         self.events.append({"elapsed_seconds": elapsed, "data": event})
         if event.get("error"):
-            raise ValueError("provider stream error")
+            raise ValueError("provider stream error: " + json.dumps(event["error"], ensure_ascii=False))
         for key in ("id", "model", "usage"):
             if event.get(key) is not None:
                 self.envelope[key] = event[key]
@@ -52,6 +52,8 @@ class StreamCapture:
                 if not isinstance(tool_delta, dict):
                     continue
                 index = tool_delta.get("index", 0)
+                if type(index) is not int or index < 0:
+                    raise ValueError(f"invalid native tool-call index: {index!r}")
                 call = self.tool_calls.setdefault(
                     index,
                     {"id": None, "type": "function", "function": {"name": "", "arguments": ""}},
@@ -101,6 +103,14 @@ def _tokenizer(path, size, mtime_ns):
     return Tokenizer.from_str(data.decode("utf-8")), hashlib.sha256(data).hexdigest()
 
 
+def count_local_tokens(text: str, tokenizer_path: str) -> tuple[int, str]:
+    """Deterministically encode text with the frozen local tokenizer."""
+    path = Path(tokenizer_path).resolve()
+    stat = path.stat()
+    tokenizer, sha = _tokenizer(str(path), stat.st_size, stat.st_mtime_ns)
+    return len(tokenizer.encode(text, add_special_tokens=False).ids), sha
+
+
 def observe_reasoning(envelope, *, timing=None, tokenizer_path=None):
     choices = envelope.get("choices") or [{}]
     message = choices[0].get("message") or {}
@@ -129,12 +139,10 @@ def observe_reasoning(envelope, *, timing=None, tokenizer_path=None):
     # Re-encoding text is explicitly separate from provider generation accounting.
     if tokens is None and content is not None and tokenizer_path:
         try:
-            path = Path(tokenizer_path).resolve()
-            stat = path.stat()
-            tokenizer, sha = _tokenizer(str(path), stat.st_size, stat.st_mtime_ns)
-            info.update(tokens=len(tokenizer.encode(content, add_special_tokens=False).ids),
+            tokens, sha = count_local_tokens(content, tokenizer_path)
+            info.update(tokens=tokens,
                         token_source="local_tokenizer_reencode", tokenizer_sha256=sha,
-                        tokenizer_path=str(path))
+                        tokenizer_path=str(Path(tokenizer_path).resolve()))
         except Exception as exc:
             info["token_count_error"] = type(exc).__name__
     return content, info

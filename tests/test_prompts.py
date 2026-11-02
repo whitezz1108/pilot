@@ -164,6 +164,16 @@ def test_a_missing_prompt_file_fails_loudly(tmp_path):
         load_prompt("manager", "v99", directory=tmp_path)
 
 
+@pytest.mark.parametrize("prompt_id", [MANAGER_PROMPT_ID, COMPLIANCE_PROMPT_ID])
+def test_v6_system_prompts_forbid_parallel_or_batched_tool_calls(prompt_id):
+    text = load_prompt(prompt_id, "v6").text
+    assert "MUST emit no more than one native tool call" in text
+    assert "Never batch, group, or parallelize tool calls" in text
+    assert "even when the actions are independent" in text
+    assert "wait for its tool result" in text
+    assert "Violating this rule is a protocol failure" in text
+
+
 def test_prompt_version_identifiers(manager_prompt, compliance_prompt, repair_prompt):
     """The fixtures load the version the pipeline runs, not a hard-coded one."""
     assert manager_prompt.ref == f"{MANAGER_PROMPT_ID}_{CURRENT_VERSION}"

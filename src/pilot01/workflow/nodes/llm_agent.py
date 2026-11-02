@@ -215,6 +215,14 @@ def make_llm_agent_node(
     enforce_verification: bool = True,
     tool_transport: ToolTransport = "legacy-text",
     strict_native_state_machine: bool = False,
+    native_output_format: str | None = None,
+    tool_turn_max_output_tokens: int | None = None,
+    final_max_output_tokens: int | None = None,
+    repair_max_output_tokens: int | None = None,
+    context_compaction_version: str | None = None,
+    context_compaction_trigger_tokens: int | None = None,
+    context_compaction_target_tokens: int | None = None,
+    search_disable_after_no_new: int | None = None,
 ) -> tuple[Node, AgentContext]:
     """Build an LLM-backed agent node, and the context that observes it.
 
@@ -310,6 +318,14 @@ def make_llm_agent_node(
                 audit=audit_request,
                 tool_transport=tool_transport,
                 strict_native_state_machine=strict_native_state_machine,
+                native_output_format=native_output_format,
+                tool_turn_max_output_tokens=tool_turn_max_output_tokens,
+                final_max_output_tokens=final_max_output_tokens,
+                repair_max_output_tokens=repair_max_output_tokens,
+                context_compaction_version=context_compaction_version,
+                context_compaction_trigger_tokens=context_compaction_trigger_tokens,
+                context_compaction_target_tokens=context_compaction_target_tokens,
+                search_disable_after_no_new=search_disable_after_no_new,
             )
         except ModelClientError as exc:
             raise ProtocolError(f"{name} model call failed: {exc}") from exc

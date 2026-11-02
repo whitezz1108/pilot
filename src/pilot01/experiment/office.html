@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pilot01 · 像素办公室</title><link rel="stylesheet" href="/pixel-office.css"></head>
+<body class="officePage"><header class="officeNav"><a class="officeBrand" href="/">p. <b>pilot01</b></a><nav aria-label="网站导航"><a href="/">实验台</a><a href="/office" aria-current="page">像素办公室</a><a href="/#gpu-monitor">GPU监控</a><a href="/records">实验记录</a><a href="/materials">实验材料</a></nav><span id="connection">连接中</span></header>
+<main class="officeMain"><div class="officeIntro"><div><span>THE LITTLE OFFICE</span><h1>今天也一起把工作做好。</h1><p>四组搭档，八个工位。跟随真实实验，看他们工作、等待和交接。</p></div><a href="/">去实验台安排工作 ↗</a></div><div class="stats" hidden></div><p class="officeNote">点击有任务的角色可查看实验记录。台词来自当前实验事件。</p></main>
+<script>
+let live={rows:[],counters:{},busy:false},draft=null,selected=new Set();
+const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function renderOverview(){}
+function showDetail(id){location.href='/records?'+new URLSearchParams({batch:'local:'+live.session.experiment_id,run_id:id})}
+async function refreshOffice(){try{const response=await fetch('/api/state',{cache:'no-store'});if(!response.ok)throw Error(response.status);live=await response.json();document.querySelector('#connection').textContent='● 实时连接';renderOverview()}catch(e){document.querySelector('#connection').textContent='连接中断 · 正在重连'}finally{setTimeout(refreshOffice,2000)}}
+</script><script src="/pixel-office.js"></script><script>refreshOffice()</script></body></html>

@@ -43,6 +43,8 @@ __all__ = [
     "ModelRequest",
     "ModelResponse",
     "ModelClient",
+    "prepare_model_request",
+    "estimate_model_request_tokens",
 ]
 
 
@@ -238,6 +240,9 @@ class ModelRequest(BaseModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
+    native_output_format: Literal["closed-final-or-tool-v1"] | None = Field(
+        default=None, exclude_if=lambda value: value is None)
+    final_output_schema: dict | None = Field(default=None, exclude_if=lambda value: value is None)
     model_call_id: str = Field(default_factory=lambda: uuid4().hex)
     params: ModelParams | PreparationModelParams
     role: str
@@ -251,6 +256,8 @@ class ModelRequest(BaseModel):
 
     @model_validator(mode="after")
     def _preparation_params_only_for_preparation(self) -> "ModelRequest":
+        if (self.native_output_format is None) != (self.final_output_schema is None):
+            raise ValueError("closed native output requires both version and final output schema")
         if isinstance(self.params, PreparationModelParams) and self.role not in {"material_generator", "material_reviewer"}:
             raise ValueError("preparation model parameters are only allowed for material preparation roles")
         if self.tool_choice is not None and not self.tools:
@@ -300,7 +307,8 @@ class ModelResponse(BaseModel):
     """Why the provider stopped generating, when it says.
 
     ``"stop"`` means the model finished its answer. ``"length"`` means it was cut
-    off at ``max_output_tokens`` -- and a truncated response is not a model that
+    off at a provider-enforced length limit, which can be smaller than the
+    requested ``max_output_tokens`` -- and a truncated response is not a model that
     failed to follow the schema, so the two must not be confused. Gate 4 found
     them confused: this provider is a reasoning model that spends output tokens
     before emitting any content, so a budget too small for its reasoning yields
@@ -345,3 +353,32 @@ class ModelClient(Protocol):
         Raises :class:`ModelClientError` on any transport or provider failure.
         """
         ...
+
+
+def prepare_model_request(client: ModelClient, request: ModelRequest) -> ModelRequest:
+    """Apply an optional transport-owned request budget before sending/logging.
+
+    Scripted and historical clients have no preparation hook and therefore
+    retain their exact requests. Live local clients may deterministically lower
+    an output ceiling so the declared input plus completion fits the endpoint.
+    """
+    prepare = getattr(client, "prepare_request", None)
+    if prepare is None:
+        return request
+    prepared = prepare(request)
+    if not isinstance(prepared, ModelRequest):
+        raise ModelClientError("model client prepare_request must return ModelRequest")
+    return prepared
+
+
+def estimate_model_request_tokens(
+    client: ModelClient, request: ModelRequest
+) -> int | None:
+    """Return a local provider-input estimate when the adapter supports one."""
+    estimate = getattr(client, "estimate_request_tokens", None)
+    if estimate is None:
+        return None
+    value = estimate(request)
+    if type(value) is not int or value < 0:
+        raise ModelClientError("model client returned an invalid token estimate")
+    return value

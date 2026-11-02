@@ -10,7 +10,8 @@ import pytest
 
 from clean_v2_fixture import materials, profile, script
 from pilot01.experiment.batch import ScriptedClientFactory
-from pilot01.experiment.console import Console, local_credentials, make_handler, read_json, write_json
+from pilot01.experiment.console import (Console, ObservedClient, local_credentials, local_gpu_credentials,
+                                        make_handler, read_json, write_json)
 from pilot01.experiment.runspec import RunPlan
 
 
@@ -49,6 +50,24 @@ def start_data(draft, count=2, concurrency=2):
                 concurrency=concurrency, slots=[1])
 
 
+def test_console_observer_preserves_native_transport_before_any_request(tmp_path):
+    from pilot01.model import ModelCallLog, ScriptedModelClient
+    from pilot01.runtime import ExperimentProfile
+    from pilot01.workflow.nodes.manager import make_llm_manager_node
+
+    inner = ScriptedModelClient(("unused",), tool_transport="native")
+    events = []
+    observed = ObservedClient(inner, lambda job, role, phase: events.append((job.run_id, role, phase)),
+                              "manager", SimpleNamespace(run_id="native-observer"))
+    assert observed.tool_transport == "native"
+    native = ExperimentProfile(Path(__file__).parents[1] / "config/experiment_native_tools_v2.yaml")
+    node, _ = make_llm_manager_node(client=observed,
+        params=native.models.for_role("manager"), call_log=ModelCallLog(),
+        runtime=native.runtime, disclosure_level="D0")
+    assert node.name == "manager"
+    assert events == []
+
+
 def test_prepare_is_offline_and_partial_selection_keeps_full_denominator(tmp_path):
     app = make_app(tmp_path)
     draft = app.prepare({})
@@ -61,6 +80,10 @@ def test_prepare_is_offline_and_partial_selection_keeps_full_denominator(tmp_pat
     assert state["session"]["status"] == "finished", state
     assert state["counters"] == {"completed": 2}
     assert all(row["node"] == "compliance" for row in state["rows"])
+    assert all(row["phase"] == "returned" for row in state["rows"])
+    assert all(row["previous_node"] == "manager" for row in state["rows"])
+    assert all(row["handoff_at"] for row in state["rows"])
+    assert all(row["role_started_at"] == row["handoff_at"] for row in state["rows"])
     assert state["session"]["full_plan_count"] == 6
     assert len(list(app.output.glob("raw/*/*/run.json"))) == 2
     paths = app._paths()
@@ -112,6 +135,53 @@ def test_invalid_launch_never_starts_a_thread(tmp_path, change):
     assert not list(app.output.rglob("run.json"))
 
 
+def test_local_gpu_launch_freezes_native_role_pools_and_real_capacity(tmp_path):
+    app = make_app(tmp_path)
+    app.execution_backend = "local-gpu"
+    app.credential_loader = local_gpu_credentials
+    app.configured_slots = app.credential_loader()
+    config = app.config()
+    assert config["default_concurrency"] == 4
+    assert config["max_concurrency"] == 12
+    assert [endpoint["gpu_index"] for endpoint in config["apis"]] == [0, 1, 2]
+    draft = app.prepare({})
+    data = dict(draft_id=draft["draft_id"], run_ids=[draft["jobs"][0]["run_id"]],
+                concurrency=4, manager_gpus=[0, 2], compliance_gpus=[1])
+    result = app.start(data)
+    app.thread.join(timeout=15)
+    assert result["manager_gpus"] == [0, 2]
+    assert result["compliance_gpus"] == [1]
+    settings = app.pool.settings
+    assert settings.max_parallel_runs == 4
+    assert settings.http_retries == 0
+    assert settings.role_slot_pools == {"manager": (1, 3), "compliance": (2,)}
+    assert [(endpoint.slot, endpoint.max_in_flight, endpoint.tool_transport)
+            for endpoint in settings.endpoints] == [(1, 4, "native"), (2, 4, "native"), (3, 4, "native")]
+    launch = read_json(app._paths().manifest_dir / "launch_selection.json")
+    assert launch["execution_backend"] == "local-gpu"
+    assert launch["role_gpus"] == {"manager": [0, 2], "compliance": [1]}
+    assert app.state()["session"]["manager_gpus"] == [0, 2]
+
+
+@pytest.mark.parametrize("change", [
+    {"manager_gpus": []}, {"compliance_gpus": []},
+    {"manager_gpus": [3]}, {"compliance_gpus": [1, 1]},
+    {"concurrency": 13},
+])
+def test_invalid_local_gpu_routing_never_starts_a_thread(tmp_path, change):
+    app = make_app(tmp_path)
+    app.execution_backend = "local-gpu"
+    app.credential_loader = local_gpu_credentials
+    app.configured_slots = app.credential_loader()
+    draft = app.prepare({})
+    data = dict(draft_id=draft["draft_id"], run_ids=[draft["jobs"][0]["run_id"]],
+                concurrency=4, manager_gpus=[0], compliance_gpus=[1])
+    data.update(change)
+    with pytest.raises(ValueError):
+        app.start(data)
+    assert app.thread is None
+
+
 def test_known_key_is_not_returned_by_config(tmp_path, monkeypatch):
     path = tmp_path / "api.env"
     path.write_text('PILOT01_BASE_URL=https://example.org/v1\nPILOT01_API_KEY=unit-private-value\nPILOT01_MODEL_ID=model\nPILOT01_BASE_URL_2=https://example.org/v1\nPILOT01_API_KEY_2=\n')
@@ -151,6 +221,8 @@ def test_terminal_stopped_batch_cannot_resume_and_new_round_preserves_results(tm
     first = app.prepare({})
     app.start(start_data(first))
     app.thread.join(timeout=15)
+    with pytest.raises(ValueError, match="已经启动过"):
+        app.start(start_data(first))
     old_paths = {p: p.read_bytes() for p in app.output.glob('raw/*/*/run.json')}
     app.session['status'] = 'stopped'  # Historical stop after all jobs were dispatched.
     assert app.state()['session']['status'] == 'finished'

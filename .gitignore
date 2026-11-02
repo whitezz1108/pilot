@@ -29,3 +29,6 @@ outputs/
 outputs_snapshot_*/
 *.pptx
 *.lnk
+
+# Local builds, sync snapshots and verification logs.
+.build/

@@ -527,7 +527,7 @@ def test_native_loop_switches_to_final_only_after_budget_is_exhausted():
             messages=messages,
             tools=tools.tool_definitions,
             tool_choice="auto",
-            params=PARAMS,
+            params=SAMPLING_PARAMS,
             role="manager",
             prompt_version="manager-native-v1",
         )
@@ -543,9 +543,13 @@ def test_native_loop_switches_to_final_only_after_budget_is_exhausted():
         tools=tools,
         tool_transport="native",
         max_tool_rounds=1,
+        tool_turn_max_output_tokens=8192,
+        final_max_output_tokens=16384,
     )
     assert result.rounds == 1
+    assert client.requests[0].params.max_output_tokens == 8192
     final_request = client.requests[1]
+    assert final_request.params.max_output_tokens == 16384
     assert final_request.tools == ()
     assert final_request.tool_choice is None
     assert "tool budget is exhausted" in final_request.messages[-1].content.lower()
@@ -688,6 +692,40 @@ def test_native_v2_pagination_exposes_only_live_single_use_cursor():
         tools.next_search_page(first_cursor)
 
 
+def test_bounded_retrieval_stops_after_two_pages_even_when_source_has_more():
+    _, registry, _ = materials()
+    tools = PagedSourceTools(
+        node="manager", library=registry.library, target_categories=TARGETS,
+        top_k=2, protocol_version="native-v2", max_search_pages_per_query=2,
+    )
+    tools.begin_invocation(contract_id="CONTRACT-001", available=True)
+    first = tools.search_contract("administrative", target_category=TARGETS[0])
+    assert first.payload["next_cursor"]
+    second = tools.next_search_page(first.payload["next_cursor"])
+    assert second.payload["page_number"] == 2
+    assert second.payload["source_has_more"] is True
+    assert second.payload["page_limit_reached"] is True
+    assert second.payload["has_more"] is False
+    assert second.payload["next_cursor"] is None
+    assert NEXT_SEARCH_PAGE not in [tool.name for tool in tools.tool_definitions]
+
+
+def test_bounded_retrieval_rejects_duplicate_open_and_logs_it():
+    _, registry, _ = materials()
+    tools = PagedSourceTools(
+        node="manager", library=registry.library, target_categories=TARGETS,
+        top_k=2, protocol_version="native-v2", reject_duplicate_opens=True,
+    )
+    tools.begin_invocation(contract_id="CONTRACT-001", available=True)
+    page = tools.search_contract("administrative", target_category=TARGETS[0])
+    paragraph_id = page.result_ids[0]
+    tools.open_source_span(paragraph_id)
+    with pytest.raises(SourceToolError, match="already opened"):
+        tools.open_source_span(paragraph_id)
+    assert [record.ok for record in tools.log.records] == [True, True, False]
+    assert tools.log.records[-1].tool == "open_source_span"
+
+
 def test_target_category_is_an_audit_label_not_a_ranking_feature():
     _, registry, _ = materials()
     tools = PagedSourceTools(
@@ -702,6 +740,160 @@ def test_target_category_is_an_audit_label_not_a_ranking_feature():
     assert [result["score"] for result in first.payload["results"]] == [
         result["score"] for result in second.payload["results"]
     ]
+
+
+def test_context_compaction_keeps_logs_but_replaces_duplicate_search_history():
+    _, registry, _ = materials()
+    tools = PagedSourceTools(
+        node="manager", library=registry.library, target_categories=TARGETS,
+        top_k=2, protocol_version="native-v2",
+        reject_duplicate_searches=True,
+    )
+    tools.begin_invocation(contract_id="CONTRACT-001", available=True)
+    search_args = {"query": "administrative", "target_category": TARGETS[0]}
+    client = ScriptedModelClient((
+        native_call(arguments=search_args, call_id="search-1"),
+        native_call(arguments=search_args, call_id="search-2"),
+        native_call(arguments=search_args, call_id="search-3"),
+        sample_case.manager_response_text(),
+    ), tool_transport="native")
+    client.estimate_request_tokens = lambda request: sum(
+        len(message.content or "") for message in request.messages
+    )
+
+    def build_request(messages):
+        return ModelRequest(messages=messages, tools=tools.tool_definitions,
+                            tool_choice="auto", params=SAMPLING_PARAMS,
+                            role="manager", prompt_version="manager-native-v2")
+
+    result = run_tool_loop(
+        client=client, build_request=build_request,
+        initial_messages=(ModelMessage(role="user", content="Assess."),),
+        output_model=ManagerOutput, repair=None, call_log=None,
+        expected_role="manager", tools=tools, tool_transport="native",
+        strict_native_state_machine=True,
+        context_compaction_version="retrieval-ledger-v1",
+        context_compaction_trigger_tokens=100000,
+        context_compaction_target_tokens=50000,
+        search_disable_after_no_new=2,
+    )
+
+    assert result.compacted_tool_turns == 2
+    assert result.search_disabled is True
+    assert len(tools.log.records) == 3
+    assert [record.ok for record in tools.log.records] == [True, False, False]
+    final_request = client.requests[-1]
+    rendered = "\n".join(message.content or "" for message in final_request.messages)
+    assert "RUNTIME RETRIEVAL LEDGER" in rendered
+    assert "#2 search_contract" in rendered and "#3 search_contract" in rendered
+    assert "RUNTIME SEARCH STOP" in rendered
+    assert "search_contract" not in [tool.name for tool in final_request.tools]
+    assert "next_search_page" not in [tool.name for tool in final_request.tools]
+    assert "open_source_span" in [tool.name for tool in final_request.tools]
+
+
+def test_token_pressure_compacts_only_complete_old_search_pairs():
+    _, registry, _ = materials()
+    tools = PagedSourceTools(
+        node="manager", library=registry.library, target_categories=TARGETS,
+        top_k=2, protocol_version="native-v2",
+    )
+    tools.begin_invocation(contract_id="CONTRACT-001", available=True)
+    client = ScriptedModelClient((
+        native_call(arguments={"query": "administrative", "target_category": TARGETS[0]},
+                    call_id="pressure-1"),
+        native_call(arguments={"query": "indemnification", "target_category": TARGETS[1]},
+                    call_id="pressure-2"),
+        sample_case.manager_response_text(),
+    ), tool_transport="native")
+    client.estimate_request_tokens = lambda request: sum(
+        len(message.content or "") for message in request.messages
+    )
+
+    def build_request(messages):
+        return ModelRequest(messages=messages, tools=tools.tool_definitions,
+                            tool_choice="auto", params=SAMPLING_PARAMS,
+                            role="manager", prompt_version="manager-native-v2")
+
+    result = run_tool_loop(
+        client=client, build_request=build_request,
+        initial_messages=(ModelMessage(role="user", content="Assess."),),
+        output_model=ManagerOutput, repair=None, call_log=None,
+        expected_role="manager", tools=tools, tool_transport="native",
+        strict_native_state_machine=True,
+        context_compaction_version="retrieval-ledger-v1",
+        context_compaction_trigger_tokens=800,
+        context_compaction_target_tokens=400,
+        search_disable_after_no_new=3,
+    )
+    assert result.compacted_tool_turns >= 1
+    assert len(tools.log.records) == 2
+    final_request = client.requests[-1]
+    rendered = "\n".join(message.content or "" for message in final_request.messages)
+    assert "RUNTIME RETRIEVAL LEDGER" in rendered
+    # Native history is removed as complete assistant/tool pairs: no orphaned tool result.
+    call_ids = {call.call_id for message in final_request.messages for call in message.tool_calls}
+    assert all(
+        message.role != "tool" or message.tool_call_id in call_ids
+        for message in final_request.messages
+    )
+
+
+def test_context_compaction_never_removes_an_opened_full_paragraph():
+    _, registry, _ = materials()
+    probe = PagedSourceTools(
+        node="probe", library=registry.library, target_categories=TARGETS,
+        top_k=2, protocol_version="native-v2",
+    )
+    probe.begin_invocation(contract_id="CONTRACT-001", available=True)
+    paragraph_id = probe.search_contract(
+        "administrative", target_category=TARGETS[0]
+    ).result_ids[0]
+    paragraph_text = registry.library.get("CONTRACT-001").paragraph(paragraph_id).text
+
+    tools = PagedSourceTools(
+        node="manager", library=registry.library, target_categories=TARGETS,
+        top_k=2, protocol_version="native-v2",
+    )
+    tools.begin_invocation(contract_id="CONTRACT-001", available=True)
+    client = ScriptedModelClient((
+        native_call(arguments={"query": "administrative", "target_category": TARGETS[0]},
+                    call_id="keep-search"),
+        native_call(name="open_source_span", arguments={"paragraph_id": paragraph_id},
+                    call_id="keep-open"),
+        native_call(arguments={"query": "indemnification", "target_category": TARGETS[1]},
+                    call_id="keep-search-2"),
+        sample_case.manager_response_text(),
+    ), tool_transport="native")
+    client.estimate_request_tokens = lambda request: sum(
+        len(message.content or "") for message in request.messages
+    )
+
+    def build_request(messages):
+        return ModelRequest(messages=messages, tools=tools.tool_definitions,
+                            tool_choice="auto", params=SAMPLING_PARAMS,
+                            role="manager", prompt_version="manager-native-v2")
+
+    result = run_tool_loop(
+        client=client, build_request=build_request,
+        initial_messages=(ModelMessage(role="user", content="Assess."),),
+        output_model=ManagerOutput, repair=None, call_log=None,
+        expected_role="manager", tools=tools, tool_transport="native",
+        strict_native_state_machine=True,
+        context_compaction_version="retrieval-ledger-v1",
+        context_compaction_trigger_tokens=800,
+        context_compaction_target_tokens=400,
+        search_disable_after_no_new=3,
+    )
+    assert result.compacted_tool_turns >= 1
+    final_rendered = "\n".join(
+        message.content or "" for message in client.requests[-1].messages
+    )
+    assert paragraph_text in final_rendered
+    assert any(
+        message.role == "tool" and message.name == "open_source_span"
+        for message in client.requests[-1].messages
+    )
 
 
 def test_native_v2_rejects_a_parallel_batch_before_any_dispatch():
