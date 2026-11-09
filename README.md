@@ -1,5 +1,7 @@
 # pilot01 — contract handoff experiments
 
+2026-11-09 新增 V0/V1/V2 恢复提示词实验，入口为 `config/experiment_recovery_v4.yaml`，通过 CLI 运行。V2 在 V1 上仅增加有证据约束的恢复目标。材料、泄漏审查、分阶段计划与分析口径见 [V4 实验协议](docs/recovery_v4_protocol.md)。本次源材料资格审查产生了运行前计划修订，原计划及原始标签均保留。
+
 本地可视化入口：双击 **启动实验操作台.cmd**，或运行 `scripts/Start-ExperimentConsole.ps1`。可选择run数量、D条件与并发，实时查看节点进度、详情并导出结果。默认预选64个run、64并发，点击开始才调用API。当前接入旧40份的D版本开发预试，详见[操作台说明](docs/experiment_console.md)。
 
 本地模型运维入口：双击 **启动模型监控面板.cmd**。该只读页面通过已有的 `ssh t640` 配置核对实际 GPU、容器、SGLang、模型、parser、采样配置和七层清单，不依赖 YAML 自报状态；详见[模型监控面板说明](tools/model-ops-dashboard/README.md)。
