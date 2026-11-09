@@ -129,6 +129,7 @@ class ConditionConfig(BaseModel):
 
     source_access: bool
     verification_required: bool
+    recovery_required: bool = Field(default=False, exclude_if=lambda v: not v)
     description: str = ""
     disclosure_level: str | None = Field(default=None, exclude_if=lambda v: v is None)
     factorial_design: bool = Field(default=False, exclude_if=lambda v: not v)
@@ -144,6 +145,8 @@ class ConditionConfig(BaseModel):
 
     @model_validator(mode="after")
     def _reject_degenerate_cell(self) -> "ConditionConfig":
+        if self.recovery_required and not (self.source_access and self.verification_required):
+            raise ValueError("recovery requires source access and required verification")
         if self.verification_required and not self.source_access:
             raise ValueError(
                 "invalid governance condition: verification_required=True with "
@@ -210,6 +213,8 @@ def load_conditions_v1(path: Path | None = None) -> ConditionsConfig:
     """
     resolved = path or (config_dir() / "conditions_v1.yaml")
     config = ConditionsConfig.model_validate(_load_yaml(resolved))
+    if any(condition.recovery_required for condition in config.conditions.values()):
+        raise WorkflowConfigError("v1 does not support a recovery intervention")
 
     actual = tuple(sorted(config.main_conditions))
     expected = tuple(sorted(V1_MAIN_CONDITION_IDS))

@@ -590,6 +590,7 @@ class ExperimentRunner:
             error_condition=job.error_condition,
             source_access=job.source_access,
             verification_required=job.verification_required,
+            recovery_required=job.recovery_required,
             repeat_index=job.repeat_index,
             plan_version=self._plan.plan_version,
             plan_fingerprint=self._plan.fingerprint(),

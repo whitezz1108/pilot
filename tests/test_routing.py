@@ -590,4 +590,6 @@ def test_manager_view_is_the_only_thing_the_manager_receives(make_state, runner)
     manager_event = next(event for event in inputs if event.node == "manager")
     assert manager_event.payload["restricted"] is True
     assert "gold" not in str(manager_event.payload["input"])
-    assert set(manager_event.payload["input"]) == set(ManagerInput.model_fields)
+    expected = build_manager_view(state)
+    assert manager_event.payload["input"] == expected.model_dump(mode="json")
+    assert "recovery_required" not in manager_event.payload["input"]

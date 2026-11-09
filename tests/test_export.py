@@ -292,6 +292,7 @@ def test_export_leaves_the_restricted_views_unchanged_and_clean(make_state, runn
         "analyst_memo",
         "source_access",
         "verification_required",
+        "recovery_required",
         "invocation",
     }
     assert "analyst_memo" not in ComplianceInput.model_fields

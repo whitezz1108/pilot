@@ -246,6 +246,7 @@ class RunArtifact(BaseModel):
     error_condition: ErrorCondition
     source_access: bool
     verification_required: bool
+    recovery_required: bool = Field(default=False, exclude_if=lambda v: not v)
 
     repeat_index: int = Field(ge=0)
 
@@ -301,6 +302,8 @@ class RunArtifact(BaseModel):
                 f"{self.verification_required} but its execution record carries "
                 f"{self.execution.verification_required}"
             )
+        if self.execution.recovery_required is not self.recovery_required:
+            raise ArtifactError("run artifact recovery requirement differs from execution record")
         if self.execution.repetition_id != self.repeat_index:
             raise ArtifactError(
                 f"run artifact {self.run_id!r} is repeat {self.repeat_index} but its "

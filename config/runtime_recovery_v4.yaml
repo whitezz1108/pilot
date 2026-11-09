@@ -1,0 +1,23 @@
+# Recovery intervention study. All three conditions share this runtime.
+runtime_version: "4"
+max_tool_requests_per_node: 16
+page_size: 5
+excerpt_chars: 400
+tool_protocol: native-v2
+native_output_format: closed-final-or-tool-v1
+search_ranker_version: human-lexical-v2
+validator_version: validator_v3
+verification_mode: audit_only
+prompt_version: v6
+scorer_version: "2"
+feedback_rounds: 0
+tool_turn_max_output_tokens: 16384
+final_max_output_tokens: 16384
+repair_max_output_tokens: 4096
+context_compaction_version: retrieval-ledger-v1
+context_compaction_trigger_tokens: 18000
+context_compaction_target_tokens: 12000
+search_disable_after_no_new: 3
+reject_duplicate_searches: true
+max_search_pages_per_query: 2
+reject_duplicate_opens: true

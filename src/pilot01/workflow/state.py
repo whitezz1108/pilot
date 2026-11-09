@@ -90,6 +90,7 @@ class ExperimentState(BaseModel):
     """Governance condition id, e.g. ``A1V1``. Not agent-facing."""
     source_access: bool = Field(frozen=True)
     verification_required: bool = Field(frozen=True)
+    recovery_required: bool = Field(default=False, frozen=True, exclude_if=lambda v: not v)
 
     # -- case metadata (frozen) -------------------------------------------
     contract_id: str = Field(frozen=True)
@@ -187,6 +188,7 @@ class ExperimentState(BaseModel):
             condition_id=condition_id,
             source_access=condition.source_access,
             verification_required=condition.verification_required,
+            recovery_required=condition.recovery_required,
             contract_id=contract_id,
             contract_text_hash=contract_text_hash,
             target_category=target_category,
@@ -228,6 +230,9 @@ class ExperimentState(BaseModel):
                 f"condition {self.condition_id} ({condition.verification_required})"
             )
 
+        if self.recovery_required is not condition.recovery_required:
+            raise TreatmentIntegrityError("recovery requirement differs from configured condition")
+
         omission = self.hidden.omission
         if self.error_condition is ErrorCondition.E0:
             if omission is not None:
@@ -254,7 +259,7 @@ class ExperimentState(BaseModel):
         # checked there, so that a deletion and a substitution cannot be
         # confused for one another in one place and not the other.
         if self.analyst_memo.claim(omission.omitted_claim_id) is not None and not (
-            self.experiment_version in ("2", "3") and omission.is_substitution
+            self.experiment_version in ("2", "3", "4") and omission.is_substitution
             and omission.replacement_claim_id == omission.omitted_claim_id
             and omission.replacement_category != omission.omitted_claim_category
         ):

@@ -128,6 +128,7 @@ class ManagerInput(RestrictedView):
     analyst_memo: AnalystMemo
     source_access: bool
     verification_required: bool
+    recovery_required: bool = Field(default=False, exclude_if=lambda v: not v)
     invocation: int = Field(default=0, ge=0, description="Fresh-context index for this call.")
 
 
@@ -154,6 +155,7 @@ class ComplianceInput(RestrictedView):
     manager_output: ManagerOutputV2 | ManagerOutput
     source_access: bool
     verification_required: bool
+    recovery_required: bool = Field(default=False, exclude_if=lambda v: not v)
     invocation: int = Field(default=0, ge=0, description="Fresh-context index for this call.")
 
 
@@ -168,6 +170,7 @@ def build_manager_view(state: ExperimentState, *, invocation: int = 0) -> Manage
         analyst_memo=state.analyst_memo,
         source_access=state.source_access,
         verification_required=state.verification_required,
+        recovery_required=state.recovery_required,
         invocation=invocation,
     )
 
@@ -189,6 +192,7 @@ def build_compliance_view(state: ExperimentState, *, invocation: int = 0) -> Com
         manager_output=state.manager_output,
         source_access=state.source_access,
         verification_required=state.verification_required,
+        recovery_required=state.recovery_required,
         invocation=invocation,
     )
 

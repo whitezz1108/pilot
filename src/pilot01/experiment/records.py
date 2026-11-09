@@ -282,7 +282,8 @@ class Records:
             if type(job.get("source_access")) is bool:
                 values["a"].add("A1" if job["source_access"] else "A0")
             if type(job.get("verification_required")) is bool:
-                values["v"].add("V1" if job["verification_required"] else "V0")
+                level = "V1" if job["verification_required"] else "V0"
+                values["v"].add("V2" if job.get("recovery_required") is True else level)
             if job.get("error_condition") in ("E0", "E1"):
                 values["e"].add(job["error_condition"])
             match = re.search(r"D[012]$", job.get("condition_id", ""))

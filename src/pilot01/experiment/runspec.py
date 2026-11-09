@@ -182,6 +182,7 @@ class RunSpec(BaseModel):
     error_condition: ErrorCondition
     source_access: bool
     verification_required: bool
+    recovery_required: bool = Field(default=False, exclude_if=lambda v: not v)
 
     repeat_index: int = Field(ge=0)
 
@@ -400,6 +401,12 @@ class RunPlan(BaseModel):
         plan read back from disk is an input like any other and gets the same
         scrutiny as one just built.
         """
+        recovery_design = conditions.conditions_version == "4"
+        recovery_runtime = self.runtime_config is not None and self.runtime_config.runtime_version == "4"
+        if recovery_design != recovery_runtime:
+            raise RunPlanError("recovery conditions and runtime v4 must be used together")
+        if any(conditions.get(cid).recovery_required for cid in self.condition_ids) and not recovery_runtime:
+            raise RunPlanError("recovery requirement needs runtime v4")
         if self.runtime_config is not None:
             import re
             for cid in self.case_ids:
@@ -442,6 +449,8 @@ class RunPlan(BaseModel):
                     f"{job.verification_required} but condition {job.condition_id} "
                     f"declares {condition.verification_required}"
                 )
+            if job.recovery_required is not condition.recovery_required:
+                raise RunPlanError("job recovery requirement differs from configured condition")
             case = registry.get(job.case_id)
             if not case.runs(job.error_condition):
                 raise RunPlanError(
@@ -619,6 +628,7 @@ def build_run_plan(
                             error_condition=error_condition,
                             source_access=condition.source_access,
                             verification_required=condition.verification_required,
+                            recovery_required=condition.recovery_required,
                             repeat_index=repeat_index,
                             models_version=models.models_version,
                             model_fingerprint=fingerprint,

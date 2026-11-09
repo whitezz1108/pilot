@@ -840,13 +840,14 @@ def test_both_wirings_produce_the_same_outcome_shape(llm_runner, runner, make_st
 # --------------------------------------------------------------------------
 
 
-def test_the_restricted_views_are_unchanged():
+def test_the_restricted_views_expose_only_approved_task_fields():
     assert set(ManagerInput.model_fields) == {
         "case_id",
         "policy",
         "analyst_memo",
         "source_access",
         "verification_required",
+        "recovery_required",
         "invocation",
     }
     assert set(ComplianceInput.model_fields) == {
@@ -855,6 +856,7 @@ def test_the_restricted_views_are_unchanged():
         "manager_output",
         "source_access",
         "verification_required",
+        "recovery_required",
         "invocation",
     }
 

@@ -35,7 +35,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..events import Event
 from ..schemas import (
@@ -103,6 +103,7 @@ class ExecutionRecord(BaseModel):
     error_condition: ErrorCondition
     source_access: bool
     verification_required: bool
+    recovery_required: bool = Field(default=False, exclude_if=lambda v: not v)
 
     # -- case metadata -----------------------------------------------------
     contract_id: str
@@ -197,6 +198,7 @@ def build_execution_record(outcome: "RunOutcome") -> ExecutionRecord:
         error_condition=state.error_condition,
         source_access=state.source_access,
         verification_required=state.verification_required,
+        recovery_required=state.recovery_required,
         contract_id=state.contract_id,
         contract_text_hash=state.contract_text_hash,
         target_category=state.target_category,

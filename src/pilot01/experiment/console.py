@@ -375,8 +375,9 @@ class Console:
 
     @staticmethod
     def job_row(i, job):
+        verification_level = "V1" if job.verification_required else "V0"
         return dict(index=i, run_id=job.run_id, case_id=job.case_id,
-                    a="A1" if job.source_access else "A0", v="V1" if job.verification_required else "V0",
+                    a="A1" if job.source_access else "A0", v="V2" if job.recovery_required else verification_level,
                     d=job.condition_id[-2:] if re.search(r"D[012]$", job.condition_id) else None,
                     condition=job.condition_id, memo=job.error_condition.value, repeat=job.repeat_index + 1)
 

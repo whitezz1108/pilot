@@ -491,9 +491,10 @@ def test_the_manager_still_does_not_receive_the_policy_answer():
 # --------------------------------------------------------------------------
 
 
-# This module exercises the transport against monkeypatched in-memory responses;
-# the autouse socket guard still blocks any accidental network connection.
-AUDITORS = frozenset({Path(__file__).name, "test_network_guard.py", "test_reasoning_observation.py"})
+# These modules name network APIs for guards or monkeypatch them with offline
+# responses. The autouse socket guard still blocks accidental connections.
+AUDITORS = frozenset({Path(__file__).name, "test_network_guard.py", "test_reasoning_observation.py",
+                      "test_experiment_watch.py", "test_recovery_hardening.py"})
 """Modules whose job is to *name* the thing they audit, so scanning them is circular."""
 
 

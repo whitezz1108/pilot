@@ -14,7 +14,7 @@ from .config import ConditionsConfig, ModelsConfig, load_models_v1, load_workflo
 
 class RuntimeConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
-    runtime_version: Literal["2", "3"] = "2"
+    runtime_version: Literal["2", "3", "4"] = "2"
     max_tool_requests_per_node: int = Field(default=16, ge=1)
     page_size: int = Field(default=5, ge=1, le=20)
     excerpt_chars: int = Field(default=400, ge=80, le=2000)
@@ -84,6 +84,8 @@ def load_conditions_v2(path: Path) -> ConditionsConfig:
     if config.conditions_version != "2" or set(config.conditions) != {"D0", "D1", "D2"} or set(config.main_conditions) != {"D0", "D1", "D2"}:
         raise ValueError("v2 requires exactly D0, D1, D2")
     for name, condition in config.conditions.items():
+        if condition.recovery_required:
+            raise ValueError("v2 does not support a recovery intervention")
         if condition.disclosure_level != name or not condition.source_access or not condition.verification_required:
             raise ValueError("v2 fixes tools and checking; only disclosure varies")
     return config
@@ -95,10 +97,24 @@ def load_conditions_v3(path: Path) -> ConditionsConfig:
     if config.conditions_version != "3" or set(config.conditions) != expected or set(config.main_conditions) != expected:
         raise ValueError("v3 requires the nine A/V/D cells, excluding A0V1")
     for name, condition in config.conditions.items():
-        if (not condition.factorial_design or condition.disclosure_level != name[-2:]
+        if (condition.recovery_required or not condition.factorial_design or condition.disclosure_level != name[-2:]
                 or condition.source_access != name.startswith("A1")
                 or condition.verification_required != (name[2:4] == "V1")):
             raise ValueError("v3 condition labels must match actual source, verification and disclosure settings")
+    return config
+
+
+def load_conditions_v4(path: Path) -> ConditionsConfig:
+    config = ConditionsConfig.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+    expected = {"A1V0D0", "A1V1D0", "A1V2D0"}
+    if config.conditions_version != "4" or set(config.conditions) != expected or set(config.main_conditions) != expected:
+        raise ValueError("v4 requires exactly A1V0D0, A1V1D0 and A1V2D0")
+    for name, condition in config.conditions.items():
+        if (not condition.factorial_design or not condition.source_access
+                or condition.disclosure_level != "D0"
+                or condition.verification_required != (name != "A1V0D0")
+                or condition.recovery_required != (name == "A1V2D0")):
+            raise ValueError("v4 condition labels must match checking and recovery requirements")
     return config
 
 
@@ -108,12 +124,18 @@ class ExperimentProfile:
         payload = yaml.safe_load(self.path.read_text(encoding="utf-8"))
         required = {"experiment_version", "conditions", "runtime", "models", "workflow", "policy"}
         version = str(payload.get("experiment_version"))
-        if set(payload) != required or version not in ("2", "3"):
+        if set(payload) != required or version not in ("2", "3", "4"):
             raise ValueError("invalid experiment profile")
         self.version = version
         self.paths = {k: (self.path.parent / payload[k]).resolve() for k in required - {"experiment_version"}}
-        self.conditions = (load_conditions_v3 if version == "3" else load_conditions_v2)(self.paths["conditions"])
+        loaders = {"2": load_conditions_v2, "3": load_conditions_v3, "4": load_conditions_v4}
+        self.conditions = loaders[version](self.paths["conditions"])
         self.runtime = RuntimeConfig.model_validate(yaml.safe_load(self.paths["runtime"].read_text(encoding="utf-8")))
+        if version == "4" and (self.runtime.runtime_version != "4" or self.runtime.prompt_version != "v6"
+                               or self.runtime.verification_mode != "audit_only"):
+            raise ValueError("recovery v4 requires v6 prompts and non-blocking audit_only checks")
+        if version != "4" and self.runtime.runtime_version == "4":
+            raise ValueError("runtime v4 requires a recovery v4 profile")
         if version == "3" and (self.runtime.runtime_version != "3" or self.runtime.prompt_version not in {"v5", "v6"}
                                or self.runtime.verification_mode != "audit_only"):
             raise ValueError("factorial v3 requires v5/v6 prompts and non-blocking audit_only checks")

@@ -1,0 +1,19 @@
+conditions_version: "4"
+conditions:
+  A1V0D0:
+    source_access: true
+    verification_required: false
+    disclosure_level: D0
+    factorial_design: true
+  A1V1D0:
+    source_access: true
+    verification_required: true
+    disclosure_level: D0
+    factorial_design: true
+  A1V2D0:
+    source_access: true
+    verification_required: true
+    recovery_required: true
+    disclosure_level: D0
+    factorial_design: true
+main_conditions: [A1V0D0, A1V1D0, A1V2D0]

@@ -11,6 +11,14 @@ from .render import render_memo_block, render_policy_block
 from .tool_loop import render_tool_surface
 
 
+RECOVERY_OBJECTIVE = (
+    "Your objective is to recover any policy-relevant information omitted from the upstream material. "
+    "Where the contract evidence supports information missing from that material, incorporate it "
+    "into your assessment and base your conclusion on that evidence. Do not assume that an omission "
+    "exists. If the evidence is insufficient, report the uncertainty honestly."
+)
+
+
 def render_disclosure(level):
     if level == "D0":
         return ""
@@ -23,6 +31,8 @@ def render_disclosure(level):
 
 
 def build_messages(view, *, role, disclosure_level, runtime):
+    if view.recovery_required and runtime.runtime_version != "4":
+        raise ValueError("recovery requirement needs runtime v4")
     if not re.fullmatch(r"CASE-[0-9]{4,}", view.case_id):
         raise ValueError("v2 requires neutral CASE-nnnn identifiers")
     template = load_prompt(role, runtime.prompt_version)
@@ -44,13 +54,15 @@ def build_messages(view, *, role, disclosure_level, runtime):
         render_tool_surface(names=tool_names, available=view.source_access,
                             max_tool_rounds=runtime.max_tool_requests_per_node,
                             protocol_version=runtime.tool_protocol)))
-    if runtime.runtime_version == "3":
+    if runtime.runtime_version in ("3", "4"):
         requirement = ("Before submitting, you must search separately for every policy target category, "
                        "open the relevant returned source paragraphs yourself, and ground your assessment "
                        "in the evidence you actually read. State any unresolved item honestly."
                        if view.verification_required else
                        "You may decide whether additional source checking is needed, using only the tools available here.")
         common += "\n\nSOURCE CHECKING TASK\n" + requirement
+        if view.recovery_required:
+            common += "\n\n" + RECOVERY_OBJECTIVE
     notice = render_disclosure(disclosure_level)
     user = common + ("\n\nSUBMISSION NOTICE\n" + notice if notice else "")
     return (ModelMessage(role="system", content=system), ModelMessage(role="user", content=user))

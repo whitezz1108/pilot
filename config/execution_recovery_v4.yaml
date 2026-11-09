@@ -1,0 +1,17 @@
+# One local client request at a time through the verified T640 SSH tunnel.
+max_parallel_runs: 1
+http_retries: 0
+recovery_successes: 20
+role_slots:
+  manager: 1
+  compliance: 1
+endpoints:
+- slot: 1
+  max_in_flight: 1
+  reasoning_stream: true
+  reasoning_tokenizer_path: outputs/recovery_v4/preflight/tokenizer.json
+  tool_transport: native
+  context_window_tokens: 49152
+  context_safety_tokens: 2048
+  minimum_output_tokens: 512
+  capacity_preflight: sglang-v1

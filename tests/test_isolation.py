@@ -153,6 +153,7 @@ def test_manager_view_carries_only_the_permitted_fields(make_state):
         "analyst_memo",
         "source_access",
         "verification_required",
+        "recovery_required",
         "invocation",
     }
 
@@ -164,6 +165,7 @@ def test_compliance_view_carries_only_the_permitted_fields():
         "manager_output",
         "source_access",
         "verification_required",
+        "recovery_required",
         "invocation",
     }
 
@@ -407,6 +409,7 @@ def test_forbidden_key_scanner_is_precise():
         "manager_output",
         "source_access",
         "verification_required",
+        "recovery_required",
         "invocation",
         "adopted_upstream_claim_ids",
         "evidence_ids",
