@@ -75,6 +75,11 @@ plan/material/runtime identity. Three contract-grouped review shards divide the
 work; they do not constitute three independent ratings of each record. Behavior
 described in an output can still let a reviewer infer the condition, and cited
 excerpts alone cannot establish absence throughout a contract.
+Reviewers also distinguish full-contract lexical search from receiving or
+opening every paragraph. The search implementation scores the full document
+before pagination; incomplete returned/opened sets do not by themselves refute
+a claim of full-contract search. Coverage allegations require the actual wording
+and its referent, with ambiguous descriptions kept separate from contradictions.
 
 Process summaries separate E1, E0 positive cases and negative controls, and
 separate manager and compliance. Numerical paired differences use actual

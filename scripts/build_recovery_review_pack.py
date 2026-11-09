@@ -87,6 +87,14 @@ An alternative paragraph may support a judgment even when it differs from an
 unknown reference annotation. An absent flag in the structured ledger does not
 establish that the corresponding text was never visible.
 
+The search tool scores paragraphs across the complete contract, then returns
+paged matches. Searching the full contract, receiving every paragraph, and
+opening/reading every paragraph are different claims. A paragraph absent from
+returned/opened sets does not refute a claim of full-contract lexical search.
+Check the exact wording and referent of coverage claims, and retain ambiguity
+when a phrase could refer only to returned candidates. Full-contract lexical
+search alone does not establish semantic absence throughout a contract.
+
 Keep all records for one contract together. For each review_id and role, return:
 target category; assessment (supported / contradicted / ambiguous /
 insufficient_evidence); policy-action consistency; source paragraph indices and
