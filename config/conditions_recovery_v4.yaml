@@ -1,3 +1,5 @@
+# Current V2: mandatory verification plus the original six-item checklist.
+# recovery_required is the legacy serialized V2 selector.
 conditions_version: "4"
 conditions:
   A1V0D0:

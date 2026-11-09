@@ -1,3 +1,5 @@
+> 历史协议：本文记录恢复目标版实验。当前 V2 已恢复为必须核验＋逐项对照清单，见 [当前版本](v2_checklist_restore.md)。历史计划及结果不可混用。
+
 # Recovery prompt study, 2026-11-09
 
 This exploratory study tests whether adding an explicit, evidence-conditioned

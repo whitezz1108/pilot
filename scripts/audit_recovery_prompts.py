@@ -17,7 +17,7 @@ from pilot01.model.openai_compat import OpenAICompatibleClient
 from pilot01.runtime import ExperimentProfile
 from pilot01.schemas import ClauseStatus, ComplianceOutputV2, ErrorCondition, ManagerOutputV2
 from pilot01.source.pagination import PagedSourceTools
-from pilot01.workflow.nodes.disclosure import RECOVERY_OBJECTIVE, build_messages
+from pilot01.workflow.nodes.disclosure import VERIFICATION_CHECKLIST, build_messages
 from pilot01.workflow.state import ExperimentState
 from pilot01.workflow.views import audit_keys, build_compliance_view, build_manager_view
 
@@ -48,7 +48,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--registry", type=Path, required=True)
     parser.add_argument("--profile", type=Path, required=True)
-    parser.add_argument("--plan", type=Path, action="append", required=True)
+    parser.add_argument("--plan", type=Path, action="append", default=[], help="Optional frozen plans to validate against current profile")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     registry = CaseRegistry.load_json(args.registry)
@@ -129,8 +129,8 @@ def main():
                                  "hidden_gold_invariant": messages == changed_messages})
             for role in ("manager", "compliance"):
                 v0, v1, v2 = [bodies[(condition, role)] for condition in ("A1V0D0", "A1V1D0", "A1V2D0")]
-                if normalized(v2, "\n\n" + RECOVERY_OBJECTIVE) != v1:
-                    failures.append(f"{case_id}/{error.value}/{role} V2 differs beyond recovery paragraph")
+                if normalized(v2, "\n\n" + VERIFICATION_CHECKLIST) != v1:
+                    failures.append(f"{case_id}/{error.value}/{role} V2 differs beyond verification checklist")
                 if normalized(v1, V1_TASK, V0_TASK) != v0:
                     failures.append(f"{case_id}/{error.value}/{role} V1 differs beyond checking task")
     summary = {"audit_version": "all-material-initial-http-v1", "passed": not failures,

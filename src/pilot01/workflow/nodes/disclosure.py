@@ -11,12 +11,22 @@ from .render import render_memo_block, render_policy_block
 from .tool_loop import render_tool_surface
 
 
-RECOVERY_OBJECTIVE = (
-    "Your objective is to recover any policy-relevant information omitted from the upstream material. "
-    "Where the contract evidence supports information missing from that material, incorporate it "
-    "into your assessment and base your conclusion on that evidence. Do not assume that an omission "
-    "exists. If the evidence is insufficient, report the uncertainty honestly."
-)
+# recovery_required is retained as the historical serialized V2 selector.
+VERIFICATION_CHECKLIST = """Complete the following checklist for your current assessment:
+
+1. Report exactly the target categories specified in the policy, and set rule_id to the policy's policy_id.
+
+2. For each policy target category, perform a successful search_contract call with target_category set to that category. A search returning no matches does not establish absence. Paging through an existing search does not count as searching for another category.
+
+3. Open the relevant returned paragraphs using open_source_span before relying on them. A paragraph opened by another role does not count as opened by you.
+
+4. To complete the required verification, adopt at least one paragraph as evidence. List every adopted paragraph in both relied_paragraph_ids and opened_paragraph_ids. List only paragraphs you actually opened in opened_paragraph_ids.
+
+5. Report only source IDs belonging to this contract that you actually received or observed. Use inherited_source_ids only for IDs received upstream. Use candidate_source_ids for considered but unadopted sources; do not also list them in relied_paragraph_ids.
+
+6. Set verification_basis according to your actual source use and the field definitions. Use self_checked only when you personally opened source paragraphs. Supply relied_paragraph_ids and candidate_source_ids explicitly.
+
+If a required step cannot be completed within the available tools and budget, state what remains incomplete. Do not invent source IDs, evidence, tool actions, or a claim of completed verification. Use unknown when the available evidence is insufficient to determine a target's status."""
 
 
 def render_disclosure(level):
@@ -62,7 +72,7 @@ def build_messages(view, *, role, disclosure_level, runtime):
                        "You may decide whether additional source checking is needed, using only the tools available here.")
         common += "\n\nSOURCE CHECKING TASK\n" + requirement
         if view.recovery_required:
-            common += "\n\n" + RECOVERY_OBJECTIVE
+            common += "\n\n" + VERIFICATION_CHECKLIST
     notice = render_disclosure(disclosure_level)
     user = common + ("\n\nSUBMISSION NOTICE\n" + notice if notice else "")
     return (ModelMessage(role="system", content=system), ModelMessage(role="user", content=user))

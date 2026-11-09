@@ -16,7 +16,7 @@ from pilot01.schemas import ClauseStatus, ErrorCondition
 from pilot01.source.tools import ToolCallLog
 from pilot01.source.verification import VerificationLog
 from pilot01.workflow.nodes import build_llm_registry
-from pilot01.workflow.nodes.disclosure import RECOVERY_OBJECTIVE
+from pilot01.workflow.nodes.disclosure import VERIFICATION_CHECKLIST
 from pilot01.workflow.runner import WorkflowRunner
 from pilot01.workflow.state import ExperimentState
 
@@ -119,10 +119,10 @@ def test_v1_v2_http_payloads_differ_only_by_recovery_paragraph(error_condition):
     normalized = copy.deepcopy(v2)
     for role, payloads in normalized.items():
         for index, body in enumerate(payloads):
-            count = sum(message.get("content", "").count(RECOVERY_OBJECTIVE)
+            count = sum(message.get("content", "").count(VERIFICATION_CHECKLIST)
                         for message in body["messages"] if isinstance(message.get("content"), str))
             assert count == (0 if index == len(payloads) - 1 else 1)
             for message in body["messages"]:
                 if isinstance(message.get("content"), str):
-                    message["content"] = message["content"].replace("\n\n" + RECOVERY_OBJECTIVE, "")
+                    message["content"] = message["content"].replace("\n\n" + VERIFICATION_CHECKLIST, "")
     assert normalized == v1

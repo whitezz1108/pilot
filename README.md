@@ -1,6 +1,6 @@
 # pilot01 — contract handoff experiments
 
-2026-11-09 新增 V0/V1/V2 恢复提示词实验，入口为 `config/experiment_recovery_v4.yaml`，通过 CLI 运行。V2 在 V1 上仅增加有证据约束的恢复目标。材料、泄漏审查、分阶段计划与分析口径见 [V4 实验协议](docs/recovery_v4_protocol.md)。本次源材料资格审查产生了运行前计划修订，原计划及原始标签均保留。
+2026-11-09 按要求将 V2 恢复为“必须核验＋逐项对照清单”，入口仍为 `config/experiment_recovery_v4.yaml`。V2 在 V1 上增加原版六项清单，移除显式恢复目标。详见[当前 V2 提示词](docs/v2_checklist_restore.md)。已有恢复目标版实验数据属于历史版本，不作为当前清单版的结果。
 
 本地可视化入口：双击 **启动实验操作台.cmd**，或运行 `scripts/Start-ExperimentConsole.ps1`。可选择run数量、D条件与并发，实时查看节点进度、详情并导出结果。默认预选64个run、64并发，点击开始才调用API。当前接入旧40份的D版本开发预试，详见[操作台说明](docs/experiment_console.md)。
 

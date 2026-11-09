@@ -13,7 +13,7 @@ from pilot01.experiment.records import Records
 from pilot01.experiment.layout import ExperimentPaths
 from pilot01.experiment.runspec import RunPlan, RunPlanError, build_run_plan
 from pilot01.runtime import ExperimentProfile
-from pilot01.workflow.nodes.disclosure import RECOVERY_OBJECTIVE
+from pilot01.workflow.nodes.disclosure import VERIFICATION_CHECKLIST
 
 
 def test_recovery_needs_access_and_verification():
@@ -79,7 +79,9 @@ def test_v4_plan_rendering_and_persistence(tmp_path):
         assert raw.artifact.execution.recovery_required == expected_recovery
         for role in ("manager", "compliance"):
             text = raw.model_calls_of(role)[0].rendered_input
-            assert (RECOVERY_OBJECTIVE in text) == expected_recovery
+            assert (VERIFICATION_CHECKLIST in text) == expected_recovery
+            assert "Your objective is to recover" not in text
+            assert "Do not assume that an omission exists" not in text
             assert ("you must search separately" in text) == job.verification_required
             for hidden in (job.condition_id, job.run_id, "recovery_required", "verification_required",
                            "gold_action", "gold_target_clause_status", "omission_target_claim_id"):
@@ -89,8 +91,8 @@ def test_v4_plan_rendering_and_persistence(tmp_path):
         for role in ("manager", "compliance"):
             v1 = rendered[(error, "A1V1D0", role)]
             v2 = rendered[(error, "A1V2D0", role)]
-            assert v2.count(RECOVERY_OBJECTIVE) == 1
-            assert v2.replace("\n\n" + RECOVERY_OBJECTIVE, "", 1) == v1
+            assert v2.count(VERIFICATION_CHECKLIST) == 1
+            assert v2.replace("\n\n" + VERIFICATION_CHECKLIST, "", 1) == v1
 
 
 def test_history_metadata_and_job_rows_preserve_recovery_level(tmp_path):
